@@ -295,6 +295,18 @@ public sealed class Instruments
         sb.Draw(_pixel, new Rectangle((int)(centre.X - d / 2f), (int)(centre.Y - d / 2f), d, d), new Color(30, 30, 32));
     }
 
+    /// <summary>The free space between the two instrument plates, where the gunsight window goes.</summary>
+    public static Rectangle GunsightRect(Rectangle viewport, float scale)
+    {
+        float d = 124f * scale, gap = 9f * scale, pad = 10f * scale, margin = 12f * scale;
+        var plateW = 3 * d + 2 * gap + 2 * pad;
+        var plateH = d + 2 * pad;
+        var inset = 12f * scale;
+        var x = margin + plateW + inset;
+        var w = viewport.Width - 2 * (margin + plateW + inset);
+        return new Rectangle((int)x, (int)(viewport.Height - margin - plateH), (int)w, (int)plateH);
+    }
+
     /// <summary>Draws both clusters along the bottom of the screen. Needs the sprite batch already begun.</summary>
     public void Draw(SpriteBatch sb, FlightModel fm, Rectangle viewport, float scale)
     {

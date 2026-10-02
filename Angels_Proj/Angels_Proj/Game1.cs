@@ -32,11 +32,9 @@ public class Game1 : Game
     private const float WheelDegPerNotch = 10f;  // one mouse-wheel notch (120 units) steps the pitch command one detent
     private const bool InvertWheel = false;     // false: wheel up = nose up
 
-    // Clouds sit in layers at fixed heights. Each cloud is scaled by its own distance from the camera, so
-    // clouds below the plane slide past slower than ones close by, and clouds above pass over the plane.
-    private static readonly float[] CloudLayersFt = { 5000f, 11000f, 19000f, 28000f };
-    private const int CloudCell = 800;           // world px
-    private const float CloudHeightJitterFt = 1000f;
+    // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
+    private const int FireIntervalTicks = 5;        // 12 rounds a second
+    private const float MaxRangeFt = 2000f, ConvergeFt = 750f, SpreadRad = 0.008f;
 
     private const string SecretCode = "ANGEL";
 
@@ -62,8 +60,14 @@ public class Game1 : Game
     private Texture2D _pixel, _grass, _tree;
     private Texture2D[] _houses, _clouds;
     private Texture2D[] _aiPlanes; // level sprite per formation colour
-    private readonly Traffic _traffic = new();
-    private readonly System.Collections.Generic.List<Traffic.Craft> _craft = new();
+    private readonly Fx _fx = new();
+    private readonly Traffic _traffic;
+    private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
+    private Gunsight _gunsight;
+    private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
+    private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
+    private int _fireCooldown, _gun;
+    private bool _firing;
     private Texture2D[] _planes; // one sprite per 10 degrees of pitch, index = step + PitchStepsDown
 
     private const int PitchStepsDown = 9, PitchStepsUp = 6; // -90 .. +60 degrees
@@ -86,6 +90,7 @@ public class Game1 : Game
 
     public Game1()
     {
+        _traffic = new Traffic(_fx);
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
@@ -109,6 +114,12 @@ public class Game1 : Game
         _sb = new SpriteBatch(GraphicsDevice);
         _pixel = Art.Pixel(GraphicsDevice);
         _instruments = new Instruments(GraphicsDevice, _pixel);
+        _gunsight = new Gunsight(GraphicsDevice, _sb);
+        var vp0 = GraphicsDevice.Viewport;
+        _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
+        _w2 = new RenderTarget2D(GraphicsDevice, vp0.Width / 2, vp0.Height / 2);
+        _w4 = new RenderTarget2D(GraphicsDevice, vp0.Width / 4, vp0.Height / 4);
+        _w8 = new RenderTarget2D(GraphicsDevice, vp0.Width / 8, vp0.Height / 8);
         _grass = Art.Grass(GraphicsDevice);
         _aiPlanes = new Texture2D[Traffic.Colors.Length];
         for (var i = 0; i < _aiPlanes.Length; i++) _aiPlanes[i] = Art.Plane(GraphicsDevice, 0f, Traffic.Colors[i]);
@@ -165,12 +176,7 @@ public class Game1 : Game
         _particles.Add(new Particle { Pos = pos, Vel = vel, Life = life, MaxLife = life, Size = size, Color = color });
 
     // Deterministic per-cell scenery so the world is endless without storing anything.
-    private static uint Hash(int x, int y, uint salt)
-    {
-        var h = (uint)(x * 374761393 + y * 668265263) ^ salt * 2246822519u;
-        h = (h ^ (h >> 13)) * 1274126177u;
-        return h ^ (h >> 16);
-    }
+    private static uint Hash(int x, int y, uint salt) => World.Hash(x, y, salt);
 
     private bool TryGetProp(int cx, int cy, out Prop p)
     {
@@ -211,6 +217,36 @@ public class Game1 : Game
         return null;
     }
 
+    private float Spread() => ((float)_rng.NextDouble() - 0.5f) * SpreadRad;
+
+    /// <summary>Fires one round from alternating wing guns: a ray from the muzzle to wherever it first meets a plane.</summary>
+    private void Fire()
+    {
+        _firing = true;
+        if (_fireCooldown > 0) return;
+        _fireCooldown = FireIntervalTicks;
+
+        World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
+        var cam = World.ToFt(_pos, _fm.Altitude);
+        _gun = 1 - _gun;
+        var muzzle = cam + r * (_gun == 0 ? -8f : 8f) - u * 1.2f + f * 8f;
+        var dir = Vector3.Normalize(cam + f * ConvergeFt - muzzle);
+        dir = Vector3.Normalize(dir + r * Spread() + u * Spread());
+
+        var reach = MaxRangeFt;
+        if (_traffic.RayHit(muzzle, dir, MaxRangeFt, out var plane, out var dist, out var damage))
+        {
+            reach = dist;
+            _traffic.Damage(plane, damage);
+            for (var i = 0; i < 3; i++) _fx.Spark(muzzle + dir * dist);
+        }
+
+        // A short tracer dash somewhere along the ray.
+        var start = 60f + (float)_rng.NextDouble() * 500f;
+        if (start < reach)
+            _tracers.Add(new Gunsight.Tracer { A = muzzle + dir * start, B = muzzle + dir * MathF.Min(reach, start + 170f), Life = 3 });
+    }
+
     private bool Pressed(Keys k) => _kb.IsKeyDown(k) && !_prevKb.IsKeyDown(k);
 
     /// <summary>Typing the secret code at any time (none of its letters are flight controls) toggles the debug menu.</summary>
@@ -230,7 +266,7 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
@@ -250,6 +286,10 @@ public class Game1 : Game
                 break;
             case 1: _cloudsOn = !_cloudsOn; break;
             case 2: _hudBars = !_hudBars; break;
+            case 3:
+                _traffic.SpawnAhead(_pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
+                _menuOpen = false;
+                break;
             default: _menuOpen = false; break;
         }
     }
@@ -321,6 +361,14 @@ public class Game1 : Game
 
         var hd = 0.5f * MathF.Sqrt(vp.Width * vp.Width + vp.Height * vp.Height);
         _traffic.Update(_pos, _fm.Altitude, f => hd * f / (Scale * GroundZoom), DistFactor);
+        _fx.Update();
+        for (var i = _tracers.Count - 1; i >= 0; i--)
+        {
+            var t = _tracers[i];
+            if (--t.Life <= 0) _tracers.RemoveAt(i); else _tracers[i] = t;
+        }
+        _firing = false;
+        if (_fireCooldown > 0) _fireCooldown--;
 
         var dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
         if (_phase == Phase.Wrecked)
@@ -366,6 +414,7 @@ public class Game1 : Game
         }
 
         _fm.Step(pitchKey, throttleKey, targetBank, BankResponse, _rng);
+        if (kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
         dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
         _pos += dir * _fm.GroundSpeed * PxPerFoot / 60f;
 
@@ -392,8 +441,101 @@ public class Game1 : Game
         float w = vp.Width, h = vp.Height, s = Scale, z = Zoom;
         var centre = new Vector2(w / 2f, h / 2f);
 
-        // Ground: flat colour plus the tiled grass, offset by world position so it scrolls. The texture
-        // fades out as we climb so it doesn't shimmer when it is heavily minified.
+        // The gunsight's 3D view goes into its own render target before anything is drawn to the screen.
+        var sightRect = Instruments.GunsightRect(vp.Bounds, s);
+        _gunsight.Render(sightRect.Width, sightRect.Height, World.ToFt(_pos, _fm.Altitude), _fm.Heading, _fm.Gamma, _fm.Bank,
+            _traffic.All, _fx, _tracers, _fm.Throttle);
+
+        _craft.Clear();
+        _craft.AddRange(_traffic.All);
+        _craft.Sort((a, b) => a.Altitude.CompareTo(b.Altitude));
+
+        // The ground is only inside the view box while we are within ViewBoxFt of it. As we climb it first goes
+        // out of focus, then fades into sky; diving back down it fades in and sharpens.
+        var groundT = _fm.Altitude / World.ViewBoxFt;
+        var vis = 1f - World.Smooth(0.7f, 1f, groundT);
+        var blur = World.Smooth(0.08f, 0.85f, groundT);
+        if (vis > 0.002f)
+        {
+            DrawGroundLayer(centre, blur);
+            if (blur > 0.02f) BlurGroundLayer();
+        }
+
+        GraphicsDevice.SetRenderTarget(null);
+        GraphicsDevice.Clear(SkyColor());
+        _sb.Begin(samplerState: SamplerState.LinearClamp);
+        if (vis > 0.002f)
+        {
+            // Sharp, mid-blur and heavy-blur copies of the ground, weighted so they add up to vis.
+            var u = Math.Clamp(blur * 2f, 0f, 2f);
+            float wSharp = u < 1f ? 1f - u : 0f, w4 = u < 1f ? u : 2f - u, w8 = u < 1f ? 0f : u - 1f;
+            wSharp *= vis; w4 *= vis; w8 *= vis;
+            var full = new Rectangle(0, 0, (int)w, (int)h);
+            // Sequential "over" compositing: alpha_k = W_k / (1 - sum of weights drawn after it).
+            if (wSharp > 0.001f) _sb.Draw(_world, full, Color.White * (wSharp / Math.Max(0.001f, 1f - w4 - w8)));
+            if (w4 > 0.001f) _sb.Draw(_w4, full, Color.White * (w4 / Math.Max(0.001f, 1f - w8)));
+            if (w8 > 0.001f) _sb.Draw(_w8, full, Color.White * w8);
+        }
+
+        if (_cloudsOn) DrawClouds(centre, CloudPass.Below);
+        DrawTraffic(centre, TrafficPass.Below);
+
+        // Plane: pick the sprite for the nose's pitch step (10 degree increments). Altitude reads as size
+        // and as how far the shadow drifts from the plane.
+        if (_phase != Phase.Wrecked)
+        {
+            var step = (int)MathF.Round(MathHelper.ToDegrees(_fm.Gamma) / 10f, MidpointRounding.AwayFromZero);
+            var tex = _planes[Math.Clamp(step, -PitchStepsDown, PitchStepsUp) + PitchStepsDown];
+            var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
+            var ps = s * 1.1f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+            var origin = new Vector2(48, 48);
+            _sb.Draw(tex, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, null, new Color(0, 0, 0, 80) * vis, _fm.Heading,
+                origin, ps * 0.9f, SpriteEffects.None, 0f);
+            // Narrow the wingspan slightly when banked for a hint of tilt.
+            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps;
+            _sb.Draw(tex, centre, null, Color.White, _fm.Heading, origin, squash, SpriteEffects.None, 0f);
+        }
+        else
+        {
+            // Scorch mark where the plane went in.
+            _sb.Draw(_pixel, new Rectangle((int)(centre.X - 40 * z), (int)(centre.Y - 28 * z), (int)(80 * z), (int)(56 * z)), new Color(20, 20, 20, 150));
+        }
+
+        // Particles (world space).
+        foreach (var p in _particles)
+        {
+            var t = p.Life / p.MaxLife;
+            var size = Math.Max(1, (int)(p.Size * z * (0.5f + 0.5f * t)));
+            var pos = centre + (p.Pos - _pos) * z;
+            _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
+        }
+
+        DrawTraffic(centre, TrafficPass.Above);
+        if (_cloudsOn) DrawClouds(centre, CloudPass.Above);
+
+        DrawHud();
+        _instruments.Draw(_sb, _fm, GraphicsDevice.Viewport.Bounds, Scale);
+        _gunsight.Draw(_sb, _pixel, sightRect, s, _firing);
+        DrawBanner();
+        DrawMenu();
+        _sb.End();
+
+        base.Draw(gameTime);
+    }
+
+    /// <summary>Sky colour behind everything: pale and bright low down, deepening as we climb.</summary>
+    private Color SkyColor() =>
+        Color.Lerp(new Color(122, 182, 236), new Color(58, 108, 204), MathHelper.Clamp(_fm.Altitude / 40000f, 0f, 1f));
+
+    /// <summary>Everything on the ground (grass, houses, trees, and the shadows planes and clouds cast) into one layer.</summary>
+    private void DrawGroundLayer(Vector2 centre, float blur)
+    {
+        var vp = GraphicsDevice.Viewport;
+        float w = vp.Width, h = vp.Height, z = Zoom;
+        GraphicsDevice.SetRenderTarget(_world);
+
+        // Flat colour plus the tiled grass, offset by world position so it scrolls. The texture fades out as we
+        // climb so it doesn't shimmer when it is heavily minified.
         _sb.Begin(samplerState: SamplerState.LinearWrap);
         _sb.Draw(_pixel, new Rectangle(0, 0, (int)w, (int)h), new Color(90, 150, 75));
         var grassA = MathHelper.Clamp((z - 0.12f) / 0.3f, 0f, 1f);
@@ -435,56 +577,24 @@ public class Game1 : Game
                 }
             }
 
-        if (_cloudsOn)
-        {
-            DrawClouds(centre, CloudPass.Shadows);
-            DrawClouds(centre, CloudPass.Below);
-        }
-        _traffic.Collect(_craft);
-        _craft.Sort((a, b) => a.Altitude.CompareTo(b.Altitude));
+        if (_cloudsOn) DrawClouds(centre, CloudPass.Shadows);
         DrawTraffic(centre, TrafficPass.Shadows);
-        DrawTraffic(centre, TrafficPass.Below);
-
-        // Plane: pick the sprite for the nose's pitch step (10 degree increments). Altitude reads as size
-        // and as how far the shadow drifts from the plane.
-        if (_phase != Phase.Wrecked)
-        {
-            var step = (int)MathF.Round(MathHelper.ToDegrees(_fm.Gamma) / 10f, MidpointRounding.AwayFromZero);
-            var tex = _planes[Math.Clamp(step, -PitchStepsDown, PitchStepsUp) + PitchStepsDown];
-            var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var ps = s * 1.1f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
-            var origin = new Vector2(48, 48);
-            _sb.Draw(tex, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, null, new Color(0, 0, 0, 80), _fm.Heading,
-                origin, ps * 0.9f, SpriteEffects.None, 0f);
-            // Narrow the wingspan slightly when banked for a hint of tilt.
-            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps;
-            _sb.Draw(tex, centre, null, Color.White, _fm.Heading, origin, squash, SpriteEffects.None, 0f);
-        }
-        else
-        {
-            // Scorch mark where the plane went in.
-            _sb.Draw(_pixel, new Rectangle((int)(centre.X - 40 * z), (int)(centre.Y - 28 * z), (int)(80 * z), (int)(56 * z)), new Color(20, 20, 20, 150));
-        }
-
-        // Particles (world space).
-        foreach (var p in _particles)
-        {
-            var t = p.Life / p.MaxLife;
-            var size = Math.Max(1, (int)(p.Size * z * (0.5f + 0.5f * t)));
-            var pos = centre + (p.Pos - _pos) * z;
-            _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
-        }
-
-        DrawTraffic(centre, TrafficPass.Above);
-        if (_cloudsOn) DrawClouds(centre, CloudPass.Above);
-
-        DrawHud();
-        _instruments.Draw(_sb, _fm, GraphicsDevice.Viewport.Bounds, Scale);
-        DrawBanner();
-        DrawMenu();
         _sb.End();
+    }
 
-        base.Draw(gameTime);
+    /// <summary>Halves the ground layer repeatedly (bilinear) to get the soft copies used when it is out of focus.</summary>
+    private void BlurGroundLayer()
+    {
+        RenderTarget2D[] chain = { _w2, _w4, _w8 };
+        Texture2D from = _world;
+        foreach (var rt in chain)
+        {
+            GraphicsDevice.SetRenderTarget(rt);
+            _sb.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.LinearClamp);
+            _sb.Draw(from, new Rectangle(0, 0, rt.Width, rt.Height), Color.White);
+            _sb.End();
+            from = rt;
+        }
     }
 
     private enum TrafficPass { Shadows, Below, Above }
@@ -501,7 +611,8 @@ public class Game1 : Game
         {
             var tex = _aiPlanes[c.Color];
             var f = DistFactor(c.Altitude);
-            var squash = new Vector2(MathF.Cos(c.Bank * 0.6f), 1f);
+            var squash = new Vector2(MathF.Cos(c.Bank * 0.6f), MathF.Max(0.5f, MathF.Cos(c.Pitch)));
+            var tint = c.State == Traffic.State.Burning ? new Color(95, 90, 90) : Color.White;
             if (pass == TrafficPass.Shadows)
             {
                 // Ground shadow: world-consistent size, nudged away from the plane with height.
@@ -513,13 +624,36 @@ public class Game1 : Game
                 continue;
             }
             var above = c.Altitude > _fm.Altitude;
-            if (above != (pass == TrafficPass.Above) || f < 0.2f) continue;
+            if (above != (pass == TrafficPass.Above) || f < 0.2f || _fm.Altitude - c.Altitude > World.ViewBoxFt) continue;
             var z = s * GroundZoom / f;
             var scale = ps / f;
             if (scale * 96f < 3f) continue;
             var screen = centre + (c.Pos - _pos) * z;
-            var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : 1f;
-            _sb.Draw(tex, screen, null, Color.White * alpha, c.Heading, origin, squash * scale, SpriteEffects.None, 0f);
+            var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
+            _sb.Draw(tex, screen, null, tint * alpha, c.Heading, origin, squash * scale, SpriteEffects.None, 0f);
+        }
+        if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
+    }
+
+    /// <summary>Smoke, fire and sparks on the map, placed and scaled by height like everything else.</summary>
+    private void DrawFx(Vector2 centre, bool above)
+    {
+        foreach (var p in _fx.Particles)
+        {
+            if ((p.Pos.Y > _fm.Altitude) != above) continue;
+            var f = DistFactor(p.Pos.Y);
+            if (f < 0.2f || _fm.Altitude - p.Pos.Y > World.ViewBoxFt) continue;
+            var z = Scale * GroundZoom / f;
+            var pos = centre + (new Vector2(p.Pos.X, p.Pos.Z) * World.PxPerFoot - _pos) * z;
+            var size = Math.Max(1, (int)(p.Size * World.PxPerFoot * z));
+            var t = p.T;
+            var col = p.Kind switch
+            {
+                Fx.Kind.Smoke => new Color(45, 45, 48) * (0.7f * t),
+                Fx.Kind.Fire => Color.Lerp(new Color(255, 90, 30), new Color(255, 225, 90), t) * Math.Min(1f, t * 2f),
+                _ => Color.White * t,
+            };
+            _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), col);
         }
     }
 
@@ -529,49 +663,46 @@ public class Game1 : Game
     {
         float w = GraphicsDevice.Viewport.Width, h = GraphicsDevice.Viewport.Height;
         var zGround = Zoom;
-        for (var li = 0; li < CloudLayersFt.Length; li++)
+        var alt = _fm.Altitude;
+        var s0 = (int)MathF.Floor(MathF.Max(0f, alt - World.ViewBoxFt) / CloudField.SliceFt);
+        var s1 = (int)MathF.Floor((alt + World.ViewBoxFt) / CloudField.SliceFt);
+        for (var slice = s0; slice <= s1; slice++)
         {
-            var layer = CloudLayersFt[li];
-            // Widest view any cloud in this layer can need (the farthest, so smallest zoom, and the ground for shadows).
-            var fFar = DistFactor(layer - CloudHeightJitterFt);
-            var fNear = DistFactor(layer + CloudHeightJitterFt);
-            if (fNear < 0.2f && pass != CloudPass.Shadows) continue;
-            var zMin = MathF.Min(Scale * GroundZoom / MathF.Max(fFar, 0.2f), zGround);
-            var halfW = w / zMin / 2f + CloudCell + 1000f;
-            var halfH = h / zMin / 2f + CloudCell + 1000f;
-            int cx0 = (int)MathF.Floor((_pos.X - halfW) / CloudCell), cx1 = (int)MathF.Floor((_pos.X + halfW) / CloudCell);
-            int cy0 = (int)MathF.Floor((_pos.Y - halfH) / CloudCell), cy1 = (int)MathF.Floor((_pos.Y + halfH) / CloudCell);
-            var salt = 100u + (uint)li * 10u;
+            // The deepest part of the slice is the furthest away, so it has the smallest zoom and the widest view.
+            var fFar = MathF.Max(DistFactor(slice * CloudField.SliceFt), 0.2f);
+            var zMin = MathF.Min(Scale * GroundZoom / fFar, zGround);
+            var halfW = w / zMin / 2f + CloudField.Cell + 1000f;
+            var halfH = h / zMin / 2f + CloudField.Cell + 1000f;
+            int cx0 = (int)MathF.Floor((_pos.X - halfW) / CloudField.Cell), cx1 = (int)MathF.Floor((_pos.X + halfW) / CloudField.Cell);
+            int cy0 = (int)MathF.Floor((_pos.Y - halfH) / CloudField.Cell), cy1 = (int)MathF.Floor((_pos.Y + halfH) / CloudField.Cell);
             for (var cy = cy0; cy <= cy1; cy++)
                 for (var cx = cx0; cx <= cx1; cx++)
                 {
-                    if (Hash(cx, cy, salt) % 100 >= 40) continue;
-                    var pos = new Vector2(
-                        (cx + (Hash(cx, cy, salt + 1) % 100) / 100f) * CloudCell,
-                        (cy + (Hash(cx, cy, salt + 2) % 100) / 100f) * CloudCell);
-                    var height = layer + (Hash(cx, cy, salt + 3) % 2001) - CloudHeightJitterFt;
-                    var size = 3f + (Hash(cx, cy, salt + 4) % 40) / 10f;
-                    var tex = _clouds[Hash(cx, cy, salt + 5) % _clouds.Length];
-                    var f = DistFactor(height);
+                    if (!CloudField.TryGet(cx, cy, slice, out var c)) continue;
+                    var depth = alt - c.Height;                       // + below us, - above us
+                    if (MathF.Abs(depth) > World.ViewBoxFt) continue; // outside the view box
+                    var tex = _clouds[c.Variant];
                     var origin = new Vector2(tex.Width / 2f, tex.Height / 2f);
+                    var f = DistFactor(c.Height);
 
                     if (pass == CloudPass.Shadows)
                     {
                         // Soft shadow on the ground, where the sun would put it.
-                        var sp = centre + (pos + new Vector2(40f, 60f) - _pos) * zGround;
-                        var ss = zGround * size;
+                        var sp = centre + (c.Pos + new Vector2(40f, 60f) - _pos) * zGround;
+                        var ss = zGround * c.Size;
                         if (ss * tex.Width < 4f) continue;
                         _sb.Draw(tex, sp, null, Color.Black * 0.14f, 0f, origin, ss, SpriteEffects.None, 0f);
                         continue;
                     }
 
-                    var above = height > _fm.Altitude;
+                    var above = depth < 0f;
                     if (above != (pass == CloudPass.Above) || f < 0.2f) continue;
                     var z = Scale * GroundZoom / f;
-                    var scale = z * size;
+                    var scale = z * c.Size;
                     if (scale * tex.Width < 4f) continue;
-                    var screen = centre + (pos - _pos) * z;
-                    var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.5f, 0f, 1f) * 0.9f : 0.9f; // fade as we pass through
+                    var screen = centre + (c.Pos - _pos) * z;
+                    // Fade out toward the edges of the box: passing through above us, thinning away below us.
+                    var alpha = (above ? MathHelper.Clamp((f - 0.2f) / 0.5f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - depth) / 1000f, 0f, 1f)) * 0.9f;
                     _sb.Draw(tex, screen, null, Color.White * alpha, 0f, origin, scale, SpriteEffects.None, 0f);
                 }
         }
@@ -655,9 +786,10 @@ public class Game1 : Game
         var ty = y + line * rowH;
         PixelFont.Draw(_sb, _pixel, $"TAS {_fm.TasMph:0} MPH   MACH {_fm.Mach:0.00}   G {_fm.LoadFactor:0.0}", new Vector2(x, ty), px, white);
         PixelFont.Draw(_sb, _pixel, $"PITCH {MathHelper.ToDegrees(_fm.Gamma):+0;-0;0}  SET {_fm.PitchCmdDeg:+0;-0;0}", new Vector2(x, ty + 10 * px), px, white);
-        if (_arcade) PixelFont.Draw(_sb, _pixel, "ARCADE", new Vector2(x, ty + 20 * px), px, new Color(255, 206, 84));
+        PixelFont.Draw(_sb, _pixel, $"HITS {_traffic.Ignited}", new Vector2(x, ty + 20 * px), px, white);
+        if (_arcade) PixelFont.Draw(_sb, _pixel, "ARCADE", new Vector2(x, ty + 30 * px), px, new Color(255, 206, 84));
 
-        var wy = ty + 32 * px;
+        var wy = ty + 42 * px;
         if (_fm.Stalled) PixelFont.Draw(_sb, _pixel, "STALL", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
         else if (_fm.Overspeed) PixelFont.Draw(_sb, _pixel, "OVERSPEED", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
     }
