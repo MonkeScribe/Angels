@@ -61,6 +61,20 @@ public static class PixelFont
 
     public const int GlyphW = 5, GlyphH = 7;
 
+    /// <summary>Lit pixels of a string in glyph space (x advances 6 per character), for baking text into textures.</summary>
+    public static System.Collections.Generic.IEnumerable<(int x, int y)> LitPixels(string text)
+    {
+        var x0 = 0;
+        foreach (var ch in text)
+        {
+            if (Glyphs.TryGetValue(char.ToUpperInvariant(ch), out var rows))
+                for (var y = 0; y < GlyphH; y++)
+                    for (var c = 0; c < GlyphW; c++)
+                        if (rows[y][c] == '#') yield return (x0 + c, y);
+            x0 += 6;
+        }
+    }
+
     public static int Measure(string text, int px) => text.Length * 6 * px - px;
 
     public static void Draw(SpriteBatch sb, Texture2D pixel, string text, Vector2 pos, int px, Color color)

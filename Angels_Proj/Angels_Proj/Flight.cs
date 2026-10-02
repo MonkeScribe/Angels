@@ -24,8 +24,11 @@ public sealed class FlightModel
     public const float VneMph = 450f;              // never-exceed, indicated
     private const float WaveDragK = 3f;            // compressibility drag above Mach 0.75
     private const float OverspeedDragK = 0.3f;     // structural-limit drag above Vne
-    private const float MaxNPos = 4.0f, MaxNNeg = -1.5f;
-    public const float MaxClimbDeg = 60f, MaxDiveDeg = 85f;
+    private const float MaxNPos = 4.0f;                    // pitch-axis g limit (either direction: a dive is a pull through the inverted side)
+    private const float NTurnMax = 7f, NStruct = 12f;          // g at full bank at reference speed; structural limit
+    private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
+    private const float StallDragCD = 0.12f;
+    public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
 
@@ -57,14 +60,19 @@ public sealed class FlightModel
     public float Throttle = 0.55f;
     private bool _pitchHeld;
     public float Bank, Heading;
+    public float VerticalRateScale = 1f;           // 1 = realistic; 2 = arcade (altitude changes twice as fast)
 
     // Read-outs.
     public float Rho, SoundSpeed, LoadFactor = 1f;
-    public bool Stalled => Speed < StallSpeed(1f);
+    public float YawRate, SlipBall;               // turn-and-slip feeds: rad/s (+ = right), -1..1 (+ = ball right)
+    public bool GroundHit { get; private set; }
+    public float ImpactSinkFpm, ImpactSpeedMph, ImpactAngleDeg;
+    public bool AccelStall { get; private set; }  // wing overloaded by a hard turn
+    public bool Stalled => Speed < StallSpeed(1f) || AccelStall;
     public float TasMph => Speed * Mph;
     public float IasMph => Speed * MathF.Sqrt(Rho / Rho0) * Mph;
     public float Mach => Speed / SoundSpeed;
-    public float VerticalSpeedFpm => Speed * MathF.Sin(Gamma) * 60f;
+    public float VerticalSpeedFpm => Speed * MathF.Sin(Gamma) * 60f * VerticalRateScale;
     public float GroundSpeed => Speed * MathF.Cos(Gamma); // ft/s
     public bool Overspeed => IasMph > VneMph;
 
@@ -130,8 +138,20 @@ public sealed class FlightModel
         var q = 0.5f * Rho * v * v;
         var mach = v / SoundSpeed;
 
-        // Wing capability: the most load factor the wing can generate right now.
-        var nAvail = MathF.Min(MaxNPos, CLmax * q * WingArea / WeightLb);
+        // Wing capability: the most load factor (g) the wing can generate right now. Above about Mach 0.45 shock
+        // stall (buffet) starts eating into maximum lift, so hard pulls at high speed stall the wing early.
+        var clMaxEff = CLmax * (1f - MathHelper.Clamp((mach - 0.45f) / 0.2f, 0f, 0.6f));
+        var nWing = clMaxEff * q * WingArea / WeightLb;
+
+        // Turn load. A hard mouse turn (full bank) pulls g, and elevator authority grows with dynamic
+        // pressure, so the same deflection pulls more g the faster you are. The wing shares its g between
+        // the turn and any pitch change; if the turn asks for more than it has, the wing stalls.
+        var bankFrac = MathF.Min(1f, MathF.Abs(Bank) / MaxBank);
+        var nTurnCmd = MathF.Min(NStruct, 1f + (NTurnMax - 1f) * bankFrac * MathHelper.Clamp(q / QRef, 0.35f, 2.8f));
+        var nTurn = MathF.Min(nTurnCmd, MathF.Max(1f, nWing));
+        var stallDepth = MathHelper.Clamp((nTurnCmd - nWing) / nTurnCmd, 0f, 1f);
+        AccelStall = nTurnCmd > nWing && bankFrac > 0.05f;
+        var nAvail = MathF.Min(MaxNPos, MathF.Max(0f, nWing - (nTurnCmd - 1f)));
 
         // Pitch stick commands a flight-path angle; the wing's load factor decides how fast we get there.
         // High Mach stiffens the controls (compressibility); a low-energy wing can't pull at all.
@@ -139,15 +159,16 @@ public sealed class FlightModel
         var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * 3f, -0.9f, 0.9f);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
-        var n = MathHelper.Clamp(nReq, MaxNNeg, nAvail);
+        var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNPos, nWing), nAvail);
         Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
-        Gamma = MathHelper.Clamp(Gamma, -MathHelper.PiOver2 * 0.98f, MathHelper.PiOver2 * 0.98f);
-        LoadFactor = n;
+        Gamma = MathHelper.Clamp(Gamma, -MathHelper.PiOver2 * 0.995f, MathHelper.PiOver2 * 0.995f);
+        LoadFactor = n + nTurn - 1f;
 
         // Drag: parasitic + induced (load factor, increased by banking) + compressibility + overspeed + idle prop.
-        var nDrag = MathF.Max(0.3f, MathF.Abs(n)) / MathF.Cos(MathF.Min(MathF.Abs(Bank), 1.2f));
+        var nDrag = MathF.Max(0.3f, MathF.Abs(n) + nTurn - 1f);
         var cl = nDrag * WeightLb / (q * WingArea);
-        var cd = CD0 + cl * cl / (MathF.PI * OswaldE * AspectRatio) + IdlePropDragCD * (1f - Throttle);
+        var cd = CD0 + cl * cl / (MathF.PI * OswaldE * AspectRatio) + IdlePropDragCD * (1f - Throttle)
+                 + StallDragCD * stallDepth; // separated flow when the wing is over-pulled
         if (mach > 0.75f) cd += WaveDragK * (mach - 0.75f) * (mach - 0.75f);
         var ias = v * MathF.Sqrt(Rho / Rho0) * Mph;
         if (ias > VneMph) { var o = (ias - VneMph) / 50f; cd += OverspeedDragK * o * o; }
@@ -158,14 +179,39 @@ public sealed class FlightModel
         var thrust = MathF.Min(StaticThrustCapLb, eta * Throttle * PowerHp(Altitude) * 550f / v);
 
         Speed = MathF.Max(0f, Speed + G * ((thrust - drag) / WeightLb - MathF.Sin(Gamma)) * Dt);
-        Altitude += Speed * MathF.Sin(Gamma) * Dt;
-        if (Altitude <= 0f) { Altitude = 0f; Gamma = MathF.Max(Gamma, 0f); } // no crash yet; the ground holds you
+        Altitude += Speed * MathF.Sin(Gamma) * Dt * VerticalRateScale;
+        if (Altitude <= 0f)
+        {
+            // Report the touchdown; the game decides whether it was a crash landing or a wreck.
+            GroundHit = true;
+            ImpactSinkFpm = MathF.Max(0f, -VerticalSpeedFpm);
+            ImpactSpeedMph = Speed * Mph;
+            ImpactAngleDeg = MathHelper.ToDegrees(-Gamma);
+            Altitude = 0f;
+            Gamma = MathF.Max(Gamma, 0f);
+        }
 
         // Arcade turning: tighter at low airspeed, softer as the wing runs out of lift.
-        var controlEff = MathHelper.Clamp(nAvail / 1f, 0.15f, 1f);
+        var controlEff = MathHelper.Clamp(nWing, 0.15f, 1f);
         var units = Speed * Mph / MphPerUnit;
         var turnSpeedFactor = 3f / MathF.Max(units, 0.9f);
-        if (controlEff < 0.5f) Heading += ((float)rng.NextDouble() - 0.5f) * 0.025f * (1f - controlEff);
-        Heading = MathHelper.WrapAngle(Heading + Bank * TurnCoeff * controlEff * turnSpeedFactor);
+        // A stalled wing can't deliver the commanded turn: it only turns as hard as the g it can still give.
+        var turnScale = nTurnCmd > 1.001f ? (nTurn - 1f) / (nTurnCmd - 1f) : 1f;
+        var noise = 0f; // random yaw from buffeting; feeds the slip ball
+        if (controlEff < 0.5f) noise += ((float)rng.NextDouble() - 0.5f) * 0.025f * (1f - controlEff);
+        if (stallDepth > 0f)
+        {
+            noise += ((float)rng.NextDouble() - 0.5f) * 0.05f * stallDepth;
+            Bank += ((float)rng.NextDouble() - 0.5f) * 0.08f * stallDepth; // wing drops as it lets go
+        }
+        var turnPart = Bank * TurnCoeff * controlEff * turnSpeedFactor * turnScale;
+        Heading = MathHelper.WrapAngle(Heading + noise + turnPart);
+
+        // Instrument feeds: turn rate (rad/s), and the slip ball. In this turn model bank and turn rate
+        // always agree (a coordinated turn), so the ball only leaves centre when the wing stops delivering
+        // the turn the bank asked for (turnScale < 1) or the airframe is being buffeted.
+        YawRate = (noise + turnPart) * 60f;
+        var bankSign = MathF.Sign(Bank) * MathF.Min(1f, MathF.Abs(Bank) / MaxBank);
+        SlipBall = MathHelper.Clamp(bankSign * (1f - turnScale) * 1.5f + noise * 25f, -1f, 1f);
     }
 }
