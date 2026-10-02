@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -22,7 +23,7 @@ public class Game1 : Game
     private const int Cell = 420;                 // scenery grid cell size (world px)
 
     // Camera: the further above the ground, the smaller everything on it looks.
-    private const float GroundZoom = 1.3f, ZoomAltScaleFt = 4000f;
+    private const float GroundZoom = 0.55f, ZoomAltScaleFt = 4000f;
 
     // Crash rules.
     private const float SurvivableSinkFpm = 1000f, SurvivableSpeedMph = 200f; // gentle enough to skid in
@@ -67,6 +68,8 @@ public class Game1 : Game
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
     private int _fireCooldown, _gun;
+    private Traffic.Plane _tracked; // the plane the gunsight is following: hovered with the mouse, kept while it stays in view
+    private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
     private Texture2D[] _planes; // one sprite per 10 degrees of pitch, index = step + PitchStepsDown
 
@@ -215,6 +218,27 @@ public class Game1 : Game
                     return p.Tree ? "HIT A TREE" : "HIT A HOUSE";
             }
         return null;
+    }
+
+    /// <summary>The plane drawn under a screen position on the map, if any (nearest to the pointer).</summary>
+    private Traffic.Plane PlaneUnderMouse(Vector2 mouse)
+    {
+        var vp = GraphicsDevice.Viewport;
+        var centre = new Vector2(vp.Width / 2f, vp.Height / 2f);
+        var s = Scale;
+        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+        Traffic.Plane best = null;
+        var bestD = float.MaxValue;
+        foreach (var p in _traffic.All)
+        {
+            var f = DistFactor(p.Altitude);
+            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
+            var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
+            var d = Vector2.Distance(screen, mouse);
+            var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
+            if (d < radius && d < bestD) { best = p; bestD = d; }
+        }
+        return best;
     }
 
     private float Spread() => ((float)_rng.NextDouble() - 0.5f) * SpreadRad;
@@ -370,6 +394,21 @@ public class Game1 : Game
         _firing = false;
         if (_fireCooldown > 0) _fireCooldown--;
 
+        // The gunsight lights up when the mouse hovers over a plane on the map, and stays lit for as long as that
+        // plane's model is in the sight's view or the mouse is still over a plane.
+        var rect = Instruments.GunsightRect(vp.Bounds, Scale);
+        var aspect = (float)rect.Width / Math.Max(1, rect.Height);
+        var hovered = PlaneUnderMouse(new Vector2(m.X, m.Y));
+        if (hovered != null) _tracked = hovered;
+        else if (_tracked != null)
+        {
+            World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
+            var rel = World.ToFt(_tracked.Pos, _tracked.Altitude) - World.ToFt(_pos, _fm.Altitude);
+            if (!_traffic.All.Contains(_tracked) || !Gunsight.Sees(rel, sr, su, sf, aspect, World.ViewBoxFt)) _tracked = null;
+        }
+        var target = _phase == Phase.Flying && _tracked != null;
+        _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
+
         var dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
         if (_phase == Phase.Wrecked)
         {
@@ -443,8 +482,9 @@ public class Game1 : Game
 
         // The gunsight's 3D view goes into its own render target before anything is drawn to the screen.
         var sightRect = Instruments.GunsightRect(vp.Bounds, s);
-        _gunsight.Render(sightRect.Width, sightRect.Height, World.ToFt(_pos, _fm.Altitude), _fm.Heading, _fm.Gamma, _fm.Bank,
-            _traffic.All, _fx, _tracers, _fm.Throttle);
+        if (_sightAlpha > 0.01f)
+            _gunsight.Render(sightRect.Width, sightRect.Height, World.ToFt(_pos, _fm.Altitude), _fm.Heading, _fm.Gamma, _fm.Bank,
+                _traffic.All, _fx, _tracers, _fm.Throttle);
 
         _craft.Clear();
         _craft.AddRange(_traffic.All);
@@ -487,7 +527,7 @@ public class Game1 : Game
             var step = (int)MathF.Round(MathHelper.ToDegrees(_fm.Gamma) / 10f, MidpointRounding.AwayFromZero);
             var tex = _planes[Math.Clamp(step, -PitchStepsDown, PitchStepsUp) + PitchStepsDown];
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var ps = s * 1.1f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
             var origin = new Vector2(48, 48);
             _sb.Draw(tex, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, null, new Color(0, 0, 0, 80) * vis, _fm.Heading,
                 origin, ps * 0.9f, SpriteEffects.None, 0f);
@@ -515,7 +555,7 @@ public class Game1 : Game
 
         DrawHud();
         _instruments.Draw(_sb, _fm, GraphicsDevice.Viewport.Bounds, Scale);
-        _gunsight.Draw(_sb, _pixel, sightRect, s, _firing);
+        _gunsight.Draw(_sb, _pixel, sightRect, s, _firing, _sightAlpha);
         DrawBanner();
         DrawMenu();
         _sb.End();
@@ -605,7 +645,7 @@ public class Game1 : Game
         var s = Scale;
         var zGround = Zoom;
         // Same on-screen size as the player at the same altitude; nearer or further planes scale by perspective.
-        var ps = s * 1.1f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
         var origin = new Vector2(48, 48);
         foreach (var c in _craft)
         {

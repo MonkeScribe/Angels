@@ -51,6 +51,15 @@ public sealed class Gunsight
 
     public Texture2D Texture => _final;
 
+    /// <summary>Would something at this offset from the camera be inside the sight's field of view and range?</summary>
+    public static bool Sees(Vector3 rel, Vector3 right, Vector3 up, Vector3 forward, float aspect, float range)
+    {
+        var d = Vector3.Dot(rel, forward);
+        if (d < 20f || rel.LengthSquared() > range * range) return false;
+        var tanH = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
+        return MathF.Abs(Vector3.Dot(rel, right) / d) < tanH && MathF.Abs(Vector3.Dot(rel, up) / d) < tanH / aspect;
+    }
+
     public Gunsight(GraphicsDevice gd, SpriteBatch sb)
     {
         _gd = gd;
@@ -473,9 +482,11 @@ public sealed class Gunsight
     // ------------------------------------------------------------------ overlay
 
     /// <summary>Draws the view into rect with a frame and the reflector-sight reticle. SpriteBatch must be running.</summary>
-    public void Draw(SpriteBatch sb, Texture2D pixel, Rectangle rect, float scale, bool firing)
+    public void Draw(SpriteBatch sb, Texture2D pixel, Rectangle rect, float scale, bool firing, float alpha)
     {
-        sb.Draw(_final, rect, Color.White);
+        // A blank panel plate sits behind the glass; the view and reticle fade in over it.
+        sb.Draw(pixel, rect, new Color(26, 28, 32));
+        if (alpha > 0.01f) sb.Draw(_final, rect, Color.White * alpha);
 
         // Frame.
         var b = Math.Max(2, (int)(4 * scale));
@@ -486,7 +497,8 @@ public sealed class Gunsight
         sb.Draw(pixel, new Rectangle(rect.Right, rect.Y, b, rect.Height), frame);
 
         // Reticle: amber ring, centre dot, four stadia ticks, and a pair of range bars.
-        var amber = new Color(255, 190, 70);
+        var amber = new Color(255, 190, 70) * alpha;
+        if (alpha <= 0.01f) return;
         var c = new Vector2(rect.Center.X, rect.Center.Y);
         var radius = rect.Height * 0.40f;
         sb.Draw(_ring, c, null, amber * 0.95f, 0f, new Vector2(128f), radius * 2f / 256f, SpriteEffects.None, 0f);
