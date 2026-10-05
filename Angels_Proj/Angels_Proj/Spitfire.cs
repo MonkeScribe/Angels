@@ -30,9 +30,9 @@ public sealed class Spitfire
     private const int Blades = 4;
     private static readonly Vector2 Hub = new(127.5f, 57f);
     private const float SpinnerR = 5.5f, BladeR = 30f, BladeWidth = 2f, TipFrac = 0.12f;
-    private static readonly Color BladeColor = new(32, 30, 28), BladeLit = new(150, 144, 132);
+    private static readonly Color BladeColor = new(12, 11, 10), BladeLit = new(46, 44, 41);
     private static readonly Color TipColor = new(232, 196, 58);   // RAF yellow tips
-    private static readonly Color BlurColor = new(170, 166, 156); // the faint line the blades sweep
+    private static readonly Color BlurColor = new(24, 23, 22);    // the faint line the blades sweep
     private const float IdleSpin = 0.2f, FullSpin = 0.55f;        // rad per tick; under pi/4, so it never seems to run backwards
     private const float BlurMax = 0.3f;
     private const int SmearSamples = 4;
