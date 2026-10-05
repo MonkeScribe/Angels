@@ -30,8 +30,11 @@ public class Game1 : Game
     private const float SkidDecelFtS2 = 18f;                                  // belly friction
     private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
-    private const float WheelDegPerNotch = 10f;  // one mouse-wheel notch (120 units) steps the pitch command one detent
-    private const bool InvertWheel = false;     // false: wheel up = nose up
+    // The mouse wheel is a spring-centred stick: each notch kicks it, so scroll speed sets the deflection, and it
+    // falls back to neutral when the wheel stops.
+    private const float WheelKick = 0.15f;       // stick deflection per notch (120 units)
+    private const float StickReturn = 0.9f;      // stick left per tick: ~7 ticks to halve
+    private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
     private const int FireIntervalTicks = 5;        // 12 rounds a second
@@ -434,11 +437,12 @@ public class Game1 : Game
         var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
-        // Mouse wheel steps the pitch command by whole detents; middle click returns it to level.
+        // Mouse wheel: scrolling pulls or pushes the stick in proportion to how fast it turns, and it springs back
+        // to neutral. Middle click returns the keys' pitch command to level.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _fm.PitchCmdDeg = MathHelper.Clamp(_fm.PitchCmdDeg + notches * WheelDegPerNotch, -FlightModel.MaxDiveDeg, FlightModel.MaxClimbDeg);
+        _fm.PitchStick = MathHelper.Clamp((_fm.PitchStick + notches * WheelKick) * StickReturn, -1f, 1f);
         var middle = m.MiddleButton == ButtonState.Pressed;
         if (middle && !_lastMiddle) _fm.PitchCmdDeg = 0f;
         _lastMiddle = middle;

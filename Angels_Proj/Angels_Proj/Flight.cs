@@ -29,6 +29,7 @@ public sealed class FlightModel
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
+    private const float StickAuthorityDeg = 70f;   // full stick asks for this much flight-path angle beyond the command
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
 
@@ -57,6 +58,7 @@ public sealed class FlightModel
     public float Speed;                            // true airspeed, ft/s
     public float Gamma;                            // flight path angle, rad (+ = climbing)
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
+    public float PitchStick;                       // spring-centred stick on top of the command, -1 (push) to +1 (pull)
     public float Throttle = 0.55f;
     private bool _pitchHeld;
     public float Bank, Heading;
@@ -155,8 +157,11 @@ public sealed class FlightModel
 
         // Pitch stick commands a flight-path angle; the wing's load factor decides how fast we get there.
         // High Mach stiffens the controls (compressibility); a low-energy wing can't pull at all.
-        var gammaTarget = MathHelper.ToRadians(PitchCmdDeg);
-        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * 3f, -0.9f, 0.9f);
+        // The stick adds to the command and, the harder it is held, raises the rate the nose is asked to move at.
+        var stick = MathHelper.Clamp(PitchStick, -1f, 1f);
+        var gammaTarget = MathHelper.ToRadians(MathHelper.Clamp(PitchCmdDeg + stick * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg));
+        var authority = MathF.Abs(stick);
+        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * (3f + 4f * authority), -0.9f - 0.9f * authority, 0.9f + 0.9f * authority);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
         var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNPos, nWing), nAvail);
