@@ -263,6 +263,7 @@ public class Game1 : Game
         var gs = _fm.GroundSpeed;
         var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
         var wings = _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel);
+        if (!Guns.ShowEffects) return;
         if ((wings & 1) != 0) _spitfire.Shot(0, _rng);
         if ((wings & 2) != 0) _spitfire.Shot(1, _rng);
     }

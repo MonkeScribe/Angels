@@ -27,6 +27,10 @@ public sealed class Guns
     public const float ConvergeFt = 750f;                 // 250 yd harmonisation
     public const int TracerEvery = 5;                     // one round in five is a tracer
 
+    /// <summary>Whether the rounds are drawn: tracers, muzzle flashes and hit sparks. Off for now. Rounds are still
+    /// fired, fly, drop and hit exactly the same; they just can't be seen.</summary>
+    public const bool ShowEffects = false;
+
     /// <summary>Gun muzzles in the aircraft frame (feet): x along the right wing, y up, z forward. Four per wing,
     /// spread outboard of the propeller arc, a little below the wing chord line and ahead of the leading edge.</summary>
     public static readonly Vector3[] Muzzles =
@@ -130,7 +134,7 @@ public sealed class Guns
             {
                 var at = r.Pos + step / len * dist;
                 traffic.Damage(plane, damage * DamageScale);
-                fx.Spark(at);
+                if (ShowEffects) fx.Spark(at);
                 Rounds.RemoveAt(i);
                 continue;
             }
@@ -146,6 +150,7 @@ public sealed class Guns
     public void Tracers(List<Gunsight.Tracer> into)
     {
         into.Clear();
+        if (!ShowEffects) return;
         foreach (var r in Rounds)
             if (r.Tracer)
                 into.Add(new Gunsight.Tracer { A = r.Pos - r.Vel * TracerStreakS, B = r.Pos, Life = 1 });
