@@ -32,7 +32,7 @@ public class Game1 : Game
 
     // The mouse wheel is a stick that stays where you leave it: each notch moves it the same amount either way, so
     // scrolling fast is just more notches. It holds until you scroll back, press W/S or middle-click.
-    private const float WheelKick = 0.15f;       // stick travel per notch (120 units); about seven notches is full stick
+    private const float WheelKick = 0.2f;        // stick travel per notch (120 units); about five notches is full stick
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.

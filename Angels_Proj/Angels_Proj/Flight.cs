@@ -24,13 +24,14 @@ public sealed class FlightModel
     public const float VneMph = 450f;              // never-exceed, indicated
     private const float WaveDragK = 3f;            // compressibility drag above Mach 0.75
     private const float OverspeedDragK = 0.3f;     // structural-limit drag above Vne
-    // Pitch-axis g limits. Level flight is 1 g, so 6 up and -4 down are the same 5 g of change either way: pulling
+    // Pitch-axis g limits. Level flight is 1 g, so 7 up and -5 down are the same 6 g of change either way: pulling
     // and pushing the nose have equal authority.
-    private const float MaxNPos = 6.0f, MaxNNeg = 4.0f;
+    private const float MaxNPos = 7.0f, MaxNNeg = 5.0f; // 6 g of change either way from level
     private const float NTurnMax = 7f, NStruct = 12f;          // g at full bank at reference speed; structural limit
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
+    private const float StickEase = 0.2f;          // fraction of the gap the eased stick closes each tick: ~4 ticks to be most of the way
     private const float StickAuthorityDeg = 60f;   // full stick, either way, asks for this much flight-path angle beyond the command
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
@@ -60,7 +61,8 @@ public sealed class FlightModel
     public float Speed;                            // true airspeed, ft/s
     public float Gamma;                            // flight path angle, rad (+ = climbing)
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
-    public float PitchStick;                       // spring-centred wheel stick on top of the command, -1 (push) to +1 (pull)
+    public float PitchStick;                       // wheel stick on top of the command, -1 (push) to +1 (pull); stays where it is left
+    private float _stickEased;                     // the stick as the nose sees it: eases to PitchStick, so each notch is a smooth sweep
     public float PitchTargetDeg => MathHelper.Clamp(PitchCmdDeg + PitchStick * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg);
     public float Throttle = 0.55f;
     private bool _pitchHeld;
@@ -127,8 +129,9 @@ public sealed class FlightModel
         if (pitchKey != 0f)
         {
             // The keys take over from the wheel: whatever the stick was asking for becomes the command.
-            PitchCmdDeg = PitchTargetDeg;
+            PitchCmdDeg = MathHelper.Clamp(PitchCmdDeg + _stickEased * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg);
             PitchStick = 0f;
+            _stickEased = 0f;
             // While a key is held the command runs ahead of the nose.
             PitchCmdDeg = pitchKey > 0 ? MathF.Min(MaxClimbDeg, PitchCmdDeg + 3f) : MathF.Max(-MaxDiveDeg, PitchCmdDeg - 3f);
             _pitchHeld = true;
@@ -163,11 +166,13 @@ public sealed class FlightModel
 
         // Pitch stick commands a flight-path angle; the wing's load factor decides how fast we get there.
         // High Mach stiffens the controls (compressibility); a low-energy wing can't pull at all.
-        // The stick adds to the command and, the harder it is held, raises the rate the nose is asked to move at.
-        var stick = MathHelper.Clamp(PitchStick, -1f, 1f);
-        var gammaTarget = MathHelper.ToRadians(PitchTargetDeg);
-        var authority = MathF.Abs(stick);
-        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * (3f + 4f * authority), -0.9f - 0.9f * authority, 0.9f + 0.9f * authority);
+        // The stick adds to the command. A wheel notch jumps PitchStick, so the nose follows it eased in rather than
+        // in steps, and while the wheel is in use the nose is asked to move much faster than the keys ask.
+        PitchStick = MathHelper.Clamp(PitchStick, -1f, 1f);
+        _stickEased += (PitchStick - _stickEased) * StickEase;
+        var gammaTarget = MathHelper.ToRadians(MathHelper.Clamp(PitchCmdDeg + _stickEased * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg));
+        var wheel = MathF.Abs(PitchStick) > 0.001f || MathF.Abs(_stickEased) > 0.001f ? 1f : 0f;
+        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * (3f + 8f * wheel), -0.9f - 1.8f * wheel, 0.9f + 1.8f * wheel);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
         var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNNeg, nWing), nAvail);
