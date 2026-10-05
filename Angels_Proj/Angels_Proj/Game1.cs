@@ -150,22 +150,6 @@ public class Game1 : Game
 
     private float Zoom => ZoomAt(0f);
 
-    /// <summary>The camera is locked to the plane, nose up the screen: the world turns round the plane instead of
-    /// the plane turning over the world. This takes an offset from the plane in world px to its screen direction.</summary>
-    private Vector2 Cam(Vector2 worldOffset)
-    {
-        float c = MathF.Cos(_fm.Heading), sn = MathF.Sin(_fm.Heading);
-        return new Vector2(worldOffset.X * c + worldOffset.Y * sn, -worldOffset.X * sn + worldOffset.Y * c);
-    }
-
-    /// <summary>Half the screen's diagonal in screen px: how far from the plane anything visible can be once the
-    /// world is turned to any heading.</summary>
-    private float HalfDiagonal()
-    {
-        var vp = GraphicsDevice.Viewport;
-        return 0.5f * MathF.Sqrt(vp.Width * vp.Width + vp.Height * vp.Height);
-    }
-
     private void Reset()
     {
         _fm = new FlightModel { VerticalRateScale = _arcade ? 2f : 1f };
@@ -249,7 +233,7 @@ public class Game1 : Game
         {
             var f = DistFactor(p.Altitude);
             if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
-            var screen = centre + Cam(p.Pos - _pos) * (s * GroundZoom / f);
+            var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
             var d = Vector2.Distance(screen, mouse);
             var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
             if (d < radius && d < bestD) { best = p; bestD = d; }
@@ -467,7 +451,7 @@ public class Game1 : Game
         var targetBank = 0f;
         if (d.Length() > DeadzonePx)
         {
-            var err = MathHelper.WrapAngle(MathF.Atan2(d.X, -d.Y)); // the plane is always facing screen-up
+            var err = MathHelper.WrapAngle(MathF.Atan2(d.X, -d.Y) - _fm.Heading);
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
         }
 
@@ -545,11 +529,11 @@ public class Game1 : Game
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
             var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
-            _spitfire.DrawShadow(_sb, centre + Cam(new Vector2(0.18f, 0.26f)) * 110f * shadowT * s, 0f, new Vector2(ps * 0.9f),
+            _spitfire.DrawShadow(_sb, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, _fm.Heading, new Vector2(ps * 0.9f),
                 new Color(0, 0, 0, 80) * vis);
             // Narrow the wingspan slightly when banked for a hint of tilt.
             var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), MathF.Max(MathF.Cos(_fm.Gamma), 0.3f)) * ps;
-            _spitfire.Draw(_sb, centre, 0f, squash, Color.White);
+            _spitfire.Draw(_sb, centre, _fm.Heading, squash, Color.White);
         }
         else
         {
@@ -562,7 +546,7 @@ public class Game1 : Game
         {
             var t = p.Life / p.MaxLife;
             var size = Math.Max(1, (int)(p.Size * z * (0.5f + 0.5f * t)));
-            var pos = centre + Cam(p.Pos - _pos) * z;
+            var pos = centre + (p.Pos - _pos) * z;
             _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
         }
 
@@ -597,40 +581,39 @@ public class Game1 : Game
         var grassA = MathHelper.Clamp((z - 0.12f) / 0.3f, 0f, 1f);
         if (grassA > 0f)
         {
-            // A square of the tiled grass big enough to cover the screen at any heading, turned about the plane.
-            var side = (int)MathF.Ceiling(2f * HalfDiagonal() / z) + 2;
-            var x0 = (int)MathF.Floor(_pos.X - side / 2f); var y0 = (int)MathF.Floor(_pos.Y - side / 2f);
-            _sb.Draw(_grass, centre, new Rectangle(x0, y0, side, side), Color.White * grassA, -_fm.Heading,
-                new Vector2(_pos.X - x0, _pos.Y - y0), z, SpriteEffects.None, 0f);
+            var vw = w / z; var vh = h / z;
+            _sb.Draw(_grass, new Rectangle(0, 0, (int)w, (int)h),
+                new Rectangle((int)MathF.Floor(_pos.X - vw / 2f), (int)MathF.Floor(_pos.Y - vh / 2f), (int)vw, (int)vh),
+                Color.White * grassA);
         }
         _sb.End();
 
         // Scenery, scaled by altitude along with the ground.
         _sb.Begin(samplerState: SamplerState.LinearClamp);
-        var halfW = HalfDiagonal() / z + Cell;
-        var halfH = halfW;
+        var halfW = w / z / 2f + Cell;
+        var halfH = h / z / 2f + Cell;
         int cx0 = (int)MathF.Floor((_pos.X - halfW) / Cell), cx1 = (int)MathF.Floor((_pos.X + halfW) / Cell);
         int cy0 = (int)MathF.Floor((_pos.Y - halfH) / Cell), cy1 = (int)MathF.Floor((_pos.Y + halfH) / Cell);
         for (var cy = cy0; cy <= cy1; cy++)
             for (var cx = cx0; cx <= cx1; cx++)
             {
                 if (!TryGetProp(cx, cy, out var p)) continue;
-                var screen = centre + Cam(p.Pos - _pos) * z;
+                var screen = centre + (p.Pos - _pos) * z;
                 var scale = z * p.Scale;
                 if (scale * 64f < 1.5f) continue; // too small to see
                 if (p.Tree)
                 {
                     // Soft shadow, then canopy.
-                    _sb.Draw(_tree, screen + Cam(new Vector2(10, 12)) * z, null, new Color(0, 0, 0, 60), -_fm.Heading,
+                    _sb.Draw(_tree, screen + new Vector2(10, 12) * z, null, new Color(0, 0, 0, 60), 0f,
                         new Vector2(24, 24), scale, SpriteEffects.None, 0f);
-                    _sb.Draw(_tree, screen, null, Color.White, -_fm.Heading, new Vector2(24, 24), scale, SpriteEffects.None, 0f);
+                    _sb.Draw(_tree, screen, null, Color.White, 0f, new Vector2(24, 24), scale, SpriteEffects.None, 0f);
                 }
                 else
                 {
                     var tex = _houses[p.House];
-                    _sb.Draw(tex, screen + Cam(new Vector2(8, 10)) * z, null, new Color(0, 0, 0, 70), p.Rot - _fm.Heading,
+                    _sb.Draw(tex, screen + new Vector2(8, 10) * z, null, new Color(0, 0, 0, 70), p.Rot,
                         new Vector2(32, 32), scale, SpriteEffects.None, 0f);
-                    _sb.Draw(tex, screen, null, Color.White, p.Rot - _fm.Heading, new Vector2(32, 32), scale, SpriteEffects.None, 0f);
+                    _sb.Draw(tex, screen, null, Color.White, p.Rot, new Vector2(32, 32), scale, SpriteEffects.None, 0f);
                 }
             }
 
@@ -674,10 +657,10 @@ public class Game1 : Game
             {
                 // Ground shadow: world-consistent size, nudged away from the plane with height.
                 var worldScale = ps / (s * GroundZoom);
-                var sp = centre + Cam(c.Pos + new Vector2(4f, 6f) * (c.Altitude / 1000f) - _pos) * zGround;
+                var sp = centre + (c.Pos + new Vector2(4f, 6f) * (c.Altitude / 1000f) - _pos) * zGround;
                 var ss = worldScale * zGround;
                 if (ss * 96f < 3f) continue;
-                _sb.Draw(tex, sp, null, new Color(0, 0, 0, 70), c.Heading - _fm.Heading, origin, squash * ss * 0.9f, SpriteEffects.None, 0f);
+                _sb.Draw(tex, sp, null, new Color(0, 0, 0, 70), c.Heading, origin, squash * ss * 0.9f, SpriteEffects.None, 0f);
                 continue;
             }
             var above = c.Altitude > _fm.Altitude;
@@ -685,9 +668,9 @@ public class Game1 : Game
             var z = s * GroundZoom / f;
             var scale = ps / f;
             if (scale * 96f < 3f) continue;
-            var screen = centre + Cam(c.Pos - _pos) * z;
+            var screen = centre + (c.Pos - _pos) * z;
             var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
-            _sb.Draw(tex, screen, null, tint * alpha, c.Heading - _fm.Heading, origin, squash * scale, SpriteEffects.None, 0f);
+            _sb.Draw(tex, screen, null, tint * alpha, c.Heading, origin, squash * scale, SpriteEffects.None, 0f);
         }
         if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
     }
@@ -701,7 +684,7 @@ public class Game1 : Game
             var f = DistFactor(p.Pos.Y);
             if (f < 0.2f || _fm.Altitude - p.Pos.Y > World.ViewBoxFt) continue;
             var z = Scale * GroundZoom / f;
-            var pos = centre + Cam(new Vector2(p.Pos.X, p.Pos.Z) * World.PxPerFoot - _pos) * z;
+            var pos = centre + (new Vector2(p.Pos.X, p.Pos.Z) * World.PxPerFoot - _pos) * z;
             var size = Math.Max(1, (int)(p.Size * World.PxPerFoot * z));
             var t = p.T;
             var col = p.Kind switch
@@ -718,6 +701,7 @@ public class Game1 : Game
 
     private void DrawClouds(Vector2 centre, CloudPass pass)
     {
+        float w = GraphicsDevice.Viewport.Width, h = GraphicsDevice.Viewport.Height;
         var zGround = Zoom;
         var alt = _fm.Altitude;
         var s0 = (int)MathF.Floor(MathF.Max(0f, alt - World.ViewBoxFt) / CloudField.SliceFt);
@@ -727,8 +711,8 @@ public class Game1 : Game
             // The deepest part of the slice is the furthest away, so it has the smallest zoom and the widest view.
             var fFar = MathF.Max(DistFactor(slice * CloudField.SliceFt), 0.2f);
             var zMin = MathF.Min(Scale * GroundZoom / fFar, zGround);
-            var halfW = HalfDiagonal() / zMin + CloudField.Cell + 1000f;
-            var halfH = halfW;
+            var halfW = w / zMin / 2f + CloudField.Cell + 1000f;
+            var halfH = h / zMin / 2f + CloudField.Cell + 1000f;
             int cx0 = (int)MathF.Floor((_pos.X - halfW) / CloudField.Cell), cx1 = (int)MathF.Floor((_pos.X + halfW) / CloudField.Cell);
             int cy0 = (int)MathF.Floor((_pos.Y - halfH) / CloudField.Cell), cy1 = (int)MathF.Floor((_pos.Y + halfH) / CloudField.Cell);
             for (var cy = cy0; cy <= cy1; cy++)
@@ -744,10 +728,10 @@ public class Game1 : Game
                     if (pass == CloudPass.Shadows)
                     {
                         // Soft shadow on the ground, where the sun would put it.
-                        var sp = centre + Cam(c.Pos + new Vector2(40f, 60f) - _pos) * zGround;
+                        var sp = centre + (c.Pos + new Vector2(40f, 60f) - _pos) * zGround;
                         var ss = zGround * c.Size;
                         if (ss * tex.Width < 4f) continue;
-                        _sb.Draw(tex, sp, null, Color.Black * 0.14f, -_fm.Heading, origin, ss, SpriteEffects.None, 0f);
+                        _sb.Draw(tex, sp, null, Color.Black * 0.14f, 0f, origin, ss, SpriteEffects.None, 0f);
                         continue;
                     }
 
@@ -756,10 +740,10 @@ public class Game1 : Game
                     var z = Scale * GroundZoom / f;
                     var scale = z * c.Size;
                     if (scale * tex.Width < 4f) continue;
-                    var screen = centre + Cam(c.Pos - _pos) * z;
+                    var screen = centre + (c.Pos - _pos) * z;
                     // Fade out toward the edges of the box: passing through above us, thinning away below us.
                     var alpha = (above ? MathHelper.Clamp((f - 0.2f) / 0.5f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - depth) / 1000f, 0f, 1f)) * 0.9f;
-                    _sb.Draw(tex, screen, null, Color.White * alpha, -_fm.Heading, origin, scale, SpriteEffects.None, 0f);
+                    _sb.Draw(tex, screen, null, Color.White * alpha, 0f, origin, scale, SpriteEffects.None, 0f);
                 }
         }
     }
