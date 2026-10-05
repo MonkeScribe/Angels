@@ -7,9 +7,11 @@ namespace Angels_Proj;
 
 /// <summary>
 /// The player's Spitfire, drawn from the pixel art in Content/Sprites (256x256, nose up). The art has no
-/// propeller: it is drawn here, seen exactly edge-on from above, so each blade is a line along the span whose
-/// visible length is its radius times the cosine of its angle round the hub. Spun fast and smeared over the
-/// frame, that reads as a flickering bar rather than a disc.
+/// propeller: it is drawn here, seen exactly edge-on from above, so the whole propeller is a line along the span.
+/// Each blade reaches its radius times the cosine of its angle round the hub, so as it turns its yellow tip
+/// slides out along the line and back in. A blade on the upper half of its turn faces the sky and is drawn lit and
+/// over the spinner; on the lower half it is in shadow and passes under the spinner. The propeller is turned at a
+/// rate the eye can follow rather than its real one, which would only alias into a bar that looks still.
 ///
 /// Firing: spitfire_firing.png is the peak of a shot. At load it is split from the plain sprite into the
 /// muzzle flames (pixels outside the airframe) and the light they throw on the wings (airframe pixels that
@@ -28,8 +30,12 @@ public sealed class Spitfire
     private const int Blades = 4;
     private static readonly Vector2 Hub = new(127.5f, 57f);
     private const float SpinnerR = 5.5f, BladeR = 30f, BladeWidth = 2f, TipFrac = 0.12f;
-    private static readonly Color BladeColor = new(32, 30, 28), TipColor = new(232, 196, 58); // RAF yellow tips
-    private const int SmearSamples = 6;
+    private static readonly Color BladeColor = new(32, 30, 28), BladeLit = new(150, 144, 132);
+    private static readonly Color TipColor = new(232, 196, 58);   // RAF yellow tips
+    private static readonly Color BlurColor = new(170, 166, 156); // the faint line the blades sweep
+    private const float IdleSpin = 0.2f, FullSpin = 0.55f;        // rad per tick; under pi/4, so it never seems to run backwards
+    private const float BlurMax = 0.3f;
+    private const int SmearSamples = 4;
     private const float Shutter = 0.6f;               // fraction of each frame's rotation smeared into the image
 
     // Firing.
@@ -198,11 +204,10 @@ public sealed class Spitfire
     /// <summary>One tick. The propeller follows the throttle and winds down when the engine is dead.</summary>
     public void Update(float throttle, bool engineRunning)
     {
-        // Far faster than the screen can show; what matters is that it aliases into a lively flicker rather than
-        // turning smoothly. 0.9 rad/tick idling is still slow enough to see the blades swing.
-        var target = engineRunning ? 0.9f + throttle * 2.6f : 0f;
+        var target = engineRunning ? IdleSpin + throttle * (FullSpin - IdleSpin) : 0f;
         _propRate += (target - _propRate) * (engineRunning ? 0.05f : 0.02f);
-        _propAngle = MathHelper.WrapAngle(_propAngle + _propRate);
+        // Clockwise as seen from the cockpit: over the top towards the right wing.
+        _propAngle = MathHelper.WrapAngle(_propAngle - _propRate);
         for (var s = 0; s < 2; s++)
         {
             _flash[s] *= FlashDecay;
@@ -211,14 +216,14 @@ public sealed class Spitfire
     }
 
     /// <summary>Draws the plane at a screen position. scale is per sprite axis (x across the wings, y along the
-    /// fuselage); pitch tilts the propeller disc so it opens out a little when the nose is up or down.</summary>
-    public void Draw(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, float pitch, Color tint)
+    /// fuselage).</summary>
+    public void Draw(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, Color tint)
     {
         sb.Draw(_body, pos, null, tint, heading, Origin, scale, SpriteEffects.None, 0f);
         for (var s = 0; s < 2; s++)
             if (_glowLevel[s] > 0.01f)
                 sb.Draw(_glow[s], pos, null, Color.White * _glowLevel[s], heading, Origin, scale, SpriteEffects.None, 0f);
-        DrawPropeller(sb, pos, heading, scale, pitch);
+        DrawPropeller(sb, pos, heading, scale);
         DrawFlames(sb, pos, heading, scale);
     }
 
@@ -233,24 +238,32 @@ public sealed class Spitfire
         return pos + new Vector2(v.X * c - v.Y * s, v.X * s + v.Y * c);
     }
 
-    private void DrawPropeller(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, float pitch)
+    private void DrawPropeller(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale)
     {
-        // Each sample is the four blades at one instant within the frame's exposure; overlaid they build up a
-        // dark core round the hub (blades always pass there) that thins out to faint, yellow-tipped ends.
-        var tilt = MathF.Sin(pitch); // the disc's vertical axis shows along the fuselage when pitched
-        var alpha = MathHelper.Clamp(1.6f / SmearSamples, 0f, 1f);
         var width = BladeWidth * scale.Y;
+        var blur = MathHelper.Clamp(_propRate / FullSpin, 0f, 1f) * BlurMax;
+        if (blur > 0.01f)
+            for (var side = -1; side <= 1; side += 2)
+                Segment(sb, pos, heading, scale, Hub + new Vector2(side * SpinnerR, 0f), Hub + new Vector2(side * BladeR, 0f), width,
+                    BlurColor * blur);
+
+        // Each sample is the four blades at one instant within the frame's exposure, trailing back along the turn.
+        var alpha = MathHelper.Clamp(1.6f / SmearSamples, 0f, 1f);
         for (var k = 0; k < SmearSamples; k++)
         {
-            var a0 = _propAngle - _propRate * Shutter * k / SmearSamples;
+            var a0 = _propAngle + _propRate * Shutter * k / SmearSamples;
             for (var b = 0; b < Blades; b++)
             {
                 var a = a0 + b * MathF.Tau / Blades;
-                var dir = new Vector2(MathF.Cos(a), MathF.Sin(a) * tilt);
-                if (dir.LengthSquared() < 0.0004f) continue; // pointing straight at the camera: nothing to see
-                var tipStart = BladeR * (1f - TipFrac);
-                Segment(sb, pos, heading, scale, Hub + dir * SpinnerR, Hub + dir * tipStart, width, BladeColor * alpha);
-                Segment(sb, pos, heading, scale, Hub + dir * tipStart, Hub + dir * BladeR, width, TipColor * alpha);
+                float reach = MathF.Cos(a) * BladeR, up = MathF.Sin(a);
+                var start = up > 0f ? 0f : SpinnerR;
+                var length = MathF.Abs(reach);
+                if (length <= start) continue; // hidden under the spinner
+                var dir = new Vector2(MathF.Sign(reach), 0f);
+                var tipStart = MathF.Max(start, length * (1f - TipFrac));
+                var shade = Color.Lerp(BladeColor, BladeLit, (up + 1f) / 2f);
+                Segment(sb, pos, heading, scale, Hub + dir * start, Hub + dir * tipStart, width, shade * alpha);
+                Segment(sb, pos, heading, scale, Hub + dir * tipStart, Hub + dir * length, width, TipColor * alpha);
             }
         }
     }
