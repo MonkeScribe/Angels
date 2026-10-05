@@ -397,8 +397,8 @@ public class Game1 : Game
         if (_fireCooldown > 0) _fireCooldown--;
         _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
 
-        // The gunsight lights up when a plane is in its view, on the plane nearest to us, and stays on that plane for
-        // as long as it remains in view; then it moves on to the next one, or goes out.
+        // The aimer comes up only when the mouse is over a plane on the map and that plane is also inside the
+        // gunsight's view; if either stops being true it goes out.
         var rect = Instruments.GunsightRect(vp.Bounds, Scale);
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
