@@ -31,7 +31,8 @@ public sealed class FlightModel
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
-    private const float WheelSlewDeg = 5f;         // the wheel swings the nose this fast (deg per tick), ignoring the g limit
+    private const float WheelSlewDeg = 5f;         // the wheel swings the nose this fast at most (deg per tick), ignoring the g limit
+    private const float WheelEase = 0.15f;         // fraction of the gap to the command the nose closes each tick: it eases in and settles
     private const float WheelLeadDeg = 25f;        // and never lets the command get further than this ahead of the nose
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
@@ -187,9 +188,11 @@ public sealed class FlightModel
         var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNNeg, nWing), nAvail);
         if (_wheelSteered)
         {
-            // The wheel points the nose: it goes straight to the command at a fixed swing rate, whatever the wing
-            // could pull, and stops dead on it. (n above still sets the drag, so a hard swing costs speed.)
-            Gamma += MathHelper.Clamp(gammaTarget - Gamma, -MathHelper.ToRadians(WheelSlewDeg), MathHelper.ToRadians(WheelSlewDeg));
+            // The wheel points the nose: it eases to the command, whatever the wing could pull, quickly when the gap
+            // is large and gently as it closes, and locks on it. (n above still sets the drag, so a hard swing costs speed.)
+            var gap = gammaTarget - Gamma;
+            var slew = MathHelper.ToRadians(WheelSlewDeg);
+            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap : MathHelper.Clamp(gap * WheelEase, -slew, slew);
             if (MathF.Abs(gammaTarget - Gamma) > MathHelper.ToRadians(1f)) n = gammaTarget > Gamma ? nAvail : -MathF.Min(MaxNNeg, nWing);
         }
         else Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
