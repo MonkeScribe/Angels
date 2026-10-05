@@ -17,7 +17,7 @@ public sealed class Gunsight
 {
     public struct Tracer { public Vector3 A, B; public int Life; }
 
-    private const float HFovDeg = 48f, SkyRadius = 900_000f;
+    private const float HFovDeg = 18f, SkyRadius = 900_000f; // square view, so 18 degrees each way: the reticle's worth
 
     // Distance slabs, far to near, in feet, and how soft each is (0 sharp, 1..3 progressively blurrier).
     private static readonly (float near, float far, int blur)[] Bands =
