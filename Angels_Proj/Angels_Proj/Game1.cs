@@ -30,9 +30,10 @@ public class Game1 : Game
     private const float SkidDecelFtS2 = 18f;                                  // belly friction
     private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
-    // The mouse wheel is a stick that stays where you leave it: each notch moves it one step the same way either
-    // direction, so scrolling fast is just more notches. It holds until you scroll back, press W/S or middle-click.
-    private const float WheelDegPerNotch = 6f;   // flight-path angle per notch (120 units); ten notches is full stick
+    // The mouse wheel is a spring-centred stick: each notch kicks it, so scroll speed sets the deflection, the same
+    // either way, and it falls back to neutral when the wheel stops.
+    private const float WheelKick = 0.15f;       // stick deflection per notch (120 units)
+    private const float StickReturn = 0.9f;      // stick left per tick: ~7 ticks to halve
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -436,12 +437,12 @@ public class Game1 : Game
         var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
-        // Mouse wheel: each notch moves the stick one step, and it stays put.
-        // Middle click levels the nose again.
+        // Mouse wheel: scrolling pulls or pushes the stick in proportion to how fast it turns, and it springs back
+        // to neutral. Middle click returns the keys' pitch command to level.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _fm.PitchStick = MathHelper.Clamp(_fm.PitchStick + notches * WheelDegPerNotch / FlightModel.StickAuthorityDeg, -1f, 1f);
+        _fm.PitchStick = MathHelper.Clamp((_fm.PitchStick + notches * WheelKick) * StickReturn, -1f, 1f);
         var middle = m.MiddleButton == ButtonState.Pressed;
         if (middle && !_lastMiddle) { _fm.PitchCmdDeg = 0f; _fm.PitchStick = 0f; }
         _lastMiddle = middle;

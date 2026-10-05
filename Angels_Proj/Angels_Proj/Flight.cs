@@ -31,7 +31,7 @@ public sealed class FlightModel
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
-    public const float StickAuthorityDeg = 60f;   // full stick, either way, asks for this much flight-path angle beyond the command
+    private const float StickAuthorityDeg = 60f;   // full stick, either way, asks for this much flight-path angle beyond the command
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
 
@@ -60,7 +60,7 @@ public sealed class FlightModel
     public float Speed;                            // true airspeed, ft/s
     public float Gamma;                            // flight path angle, rad (+ = climbing)
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
-    public float PitchStick;                       // wheel stick on top of the command, -1 (push) to +1 (pull); stays where it is left
+    public float PitchStick;                       // spring-centred wheel stick on top of the command, -1 (push) to +1 (pull)
     public float PitchTargetDeg => MathHelper.Clamp(PitchCmdDeg + PitchStick * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg);
     public float Throttle = 0.55f;
     private bool _pitchHeld;
