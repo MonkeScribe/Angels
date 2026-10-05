@@ -41,7 +41,7 @@ public sealed class Spitfire
     // Where the propeller hub is in each view (sprite px y; x is the centre line): the spinner, which sits about
     // 9 px behind the nose tip in level flight and moves toward the plane's centre as the nose points away from or
     // at the camera.
-    private static readonly float[] ViewHubY = { 131f, 115f, 84f, 67f, 57f, 59f, 57f, 65f, 72f, 83f, 100f, 133f };
+    private static readonly float[] ViewHubY = { 131f, 115f, 84f, 67f, 57f, 59f, 57f, 65f, 72f, 83f, 100f, 126f };
 
     // Propeller (sprite px). Spitfire IX: four blades, 10 ft 9 in across on a 36 ft 10 in span.
     private const int Blades = 4;
