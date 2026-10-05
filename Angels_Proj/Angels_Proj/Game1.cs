@@ -241,7 +241,7 @@ public class Game1 : Game
         foreach (var p in _traffic.All)
         {
             var f = DistFactor(p.Altitude);
-            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
+            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt || p.State != Traffic.State.Flying) continue;
             if (!Gunsight.Sees(World.ToFt(p.Pos, p.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)) continue;
             var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
             var d = Vector2.Distance(screen, mouse);
@@ -409,12 +409,12 @@ public class Game1 : Game
         _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
 
         // The aimer comes up when the mouse is over a plane on the map that is also inside the gunsight's view.
-        // After that the mouse is free: the aimer stays on that plane until the sight loses it.
+        // After that the mouse is free: the aimer stays on that plane until the sight loses it or it is shot down.
         var rect = Instruments.GunsightRect(vp.Bounds, Scale);
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
-        if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) ||
+        if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) || _tracked.State != Traffic.State.Flying ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
