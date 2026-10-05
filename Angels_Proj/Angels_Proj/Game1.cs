@@ -32,7 +32,7 @@ public class Game1 : Game
 
     // The mouse wheel points the nose: each notch swings it this much, the same either way, and when the wheel stops
     // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
-    private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
+    private const float WheelDegPerNotch = 1f;   // flight-path angle per notch (120 units)
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
