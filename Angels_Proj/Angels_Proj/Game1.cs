@@ -30,10 +30,11 @@ public class Game1 : Game
     private const float SkidDecelFtS2 = 18f;                                  // belly friction
     private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
-    // The mouse wheel is a spring-centred stick: each notch kicks it, so scroll speed sets the deflection, the same
-    // either way, and it falls back to neutral when the wheel stops (unless the gunsight is up).
-    private const float WheelKick = 0.15f;       // stick deflection per notch (120 units)
-    private const float StickReturn = 0.9f;      // stick left per tick: ~7 ticks to halve
+    // The mouse wheel is a stick that stays where you leave it: each notch moves it, further the faster you are
+    // scrolling, the same either way. It holds until you scroll back, press W/S or middle-click.
+    private const float WheelKick = 0.15f;       // stick travel per notch (120 units) at a slow scroll
+    private const float WheelSpeedGain = 0.5f;   // extra travel per notch for each notch scrolled in the last ~10 ticks
+    private const float ScrollMemory = 0.9f;     // scroll speed left per tick
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -71,7 +72,7 @@ public class Game1 : Game
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
     private int _fireCooldown, _gun;
-    private Traffic.Plane _tracked; // the plane the gunsight is following: hovered with the mouse, kept while it stays in view
+    private Traffic.Plane _tracked; // the plane the gunsight is following: the nearest in its view, kept while it stays there
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
     private Spitfire _spitfire;
@@ -80,6 +81,7 @@ public class Game1 : Game
     private FlightModel _fm = new();
     private Instruments _instruments;
     private int _lastWheel;
+    private float _scrollSpeed;                  // recent wheel speed, notches per ~10 ticks
     private bool _lastMiddle;
     private KeyboardState _kb, _prevKb;
     private bool _prevLeft;
@@ -218,27 +220,6 @@ public class Game1 : Game
                     return p.Tree ? "HIT A TREE" : "HIT A HOUSE";
             }
         return null;
-    }
-
-    /// <summary>The plane drawn under a screen position on the map, if any (nearest to the pointer).</summary>
-    private Traffic.Plane PlaneUnderMouse(Vector2 mouse)
-    {
-        var vp = GraphicsDevice.Viewport;
-        var centre = new Vector2(vp.Width / 2f, vp.Height / 2f);
-        var s = Scale;
-        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
-        Traffic.Plane best = null;
-        var bestD = float.MaxValue;
-        foreach (var p in _traffic.All)
-        {
-            var f = DistFactor(p.Altitude);
-            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
-            var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
-            var d = Vector2.Distance(screen, mouse);
-            var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
-            if (d < radius && d < bestD) { best = p; bestD = d; }
-        }
-        return best;
     }
 
     private float Spread() => ((float)_rng.NextDouble() - 0.5f) * SpreadRad;
@@ -396,17 +377,27 @@ public class Game1 : Game
         if (_fireCooldown > 0) _fireCooldown--;
         _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
 
-        // The gunsight lights up when the mouse hovers over a plane on the map, and stays lit for as long as that
-        // plane's model is in the sight's view or the mouse is still over a plane.
+        // The gunsight lights up when a plane is in its view, on the plane nearest to us, and stays on that plane for
+        // as long as it remains in view; then it moves on to the next one, or goes out.
         var rect = Instruments.GunsightRect(vp.Bounds, Scale);
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
-        var hovered = PlaneUnderMouse(new Vector2(m.X, m.Y));
-        if (hovered != null) _tracked = hovered;
-        else if (_tracked != null)
+        World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
+        var camFt = World.ToFt(_pos, _fm.Altitude);
+        if (_tracked != null && (!_traffic.All.Contains(_tracked) ||
+                !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)))
+            _tracked = null;
+        if (_tracked == null)
         {
-            World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
-            var rel = World.ToFt(_tracked.Pos, _tracked.Altitude) - World.ToFt(_pos, _fm.Altitude);
-            if (!_traffic.All.Contains(_tracked) || !Gunsight.Sees(rel, sr, su, sf, aspect, World.ViewBoxFt)) _tracked = null;
+            var nearest = float.MaxValue;
+            foreach (var p in _traffic.All)
+            {
+                var rel = World.ToFt(p.Pos, p.Altitude) - camFt;
+                if (rel.LengthSquared() < nearest && Gunsight.Sees(rel, sr, su, sf, aspect, World.ViewBoxFt))
+                {
+                    nearest = rel.LengthSquared();
+                    _tracked = p;
+                }
+            }
         }
         var target = _phase == Phase.Flying && _tracked != null;
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
@@ -437,13 +428,13 @@ public class Game1 : Game
         var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
-        // Mouse wheel: scrolling pulls or pushes the stick in proportion to how fast it turns, and it springs back
-        // to neutral, except while the gunsight is up, when it stays where it is so the aim can be held. Middle
-        // click returns the keys' pitch command to level.
+        // Mouse wheel: each notch moves the stick, by more the faster the wheel is turning, and it stays put.
+        // Middle click levels the nose again.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _fm.PitchStick = MathHelper.Clamp((_fm.PitchStick + notches * WheelKick) * (target ? 1f : StickReturn), -1f, 1f);
+        _scrollSpeed = _scrollSpeed * ScrollMemory + MathF.Abs(notches);
+        _fm.PitchStick = MathHelper.Clamp(_fm.PitchStick + notches * WheelKick * (1f + WheelSpeedGain * _scrollSpeed), -1f, 1f);
         var middle = m.MiddleButton == ButtonState.Pressed;
         if (middle && !_lastMiddle) { _fm.PitchCmdDeg = 0f; _fm.PitchStick = 0f; }
         _lastMiddle = middle;
