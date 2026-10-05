@@ -33,6 +33,7 @@ public class Game1 : Game
     // The mouse wheel points the nose: each notch swings it this much, the same either way, and when the wheel stops
     // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
+    private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -70,7 +71,7 @@ public class Game1 : Game
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
     private int _fireCooldown, _gun;
-    private Traffic.Plane _tracked; // the plane the gunsight is following: the nearest in its view, kept while it stays there
+    private Traffic.Plane _tracked; // the plane the aimer is on: under the mouse and in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
     private Spitfire _spitfire;
@@ -217,6 +218,28 @@ public class Game1 : Game
                     return p.Tree ? "HIT A TREE" : "HIT A HOUSE";
             }
         return null;
+    }
+
+    /// <summary>The plane the mouse is over on the map that is also inside the sight's view (nearest to the pointer), if any.</summary>
+    private Traffic.Plane PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect)
+    {
+        var vp = GraphicsDevice.Viewport;
+        var centre = new Vector2(vp.Width / 2f, vp.Height / 2f);
+        var s = Scale;
+        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+        Traffic.Plane best = null;
+        var bestD = float.MaxValue;
+        foreach (var p in _traffic.All)
+        {
+            var f = DistFactor(p.Altitude);
+            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
+            if (!Gunsight.Sees(World.ToFt(p.Pos, p.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)) continue;
+            var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
+            var d = Vector2.Distance(screen, mouse);
+            var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
+            if (d < radius && d < bestD) { best = p; bestD = d; }
+        }
+        return best;
     }
 
     private float Spread() => ((float)_rng.NextDouble() - 0.5f) * SpreadRad;
@@ -380,22 +403,7 @@ public class Game1 : Game
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
-        if (_tracked != null && (!_traffic.All.Contains(_tracked) ||
-                !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)))
-            _tracked = null;
-        if (_tracked == null)
-        {
-            var nearest = float.MaxValue;
-            foreach (var p in _traffic.All)
-            {
-                var rel = World.ToFt(p.Pos, p.Altitude) - camFt;
-                if (rel.LengthSquared() < nearest && Gunsight.Sees(rel, sr, su, sf, aspect, World.ViewBoxFt))
-                {
-                    nearest = rel.LengthSquared();
-                    _tracked = p;
-                }
-            }
-        }
+        _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
@@ -425,11 +433,12 @@ public class Game1 : Game
         var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
-        // Mouse wheel: each notch swings the nose, and it stops dead where the wheel stops.
+        // Mouse wheel: each notch swings the nose, and it stops dead where the wheel stops. Notches are fine
+        // steps while the aimer is up.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _fm.WheelPitch(notches * WheelDegPerNotch);
+        _fm.WheelPitch(notches * (target ? AimDegPerNotch : WheelDegPerNotch));
         var middle = m.MiddleButton == ButtonState.Pressed;
         if (middle && !_lastMiddle) _fm.WheelLevel();
         _lastMiddle = middle;
