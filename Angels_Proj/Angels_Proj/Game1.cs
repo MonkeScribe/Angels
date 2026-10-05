@@ -529,7 +529,7 @@ public class Game1 : Game
                 new Color(0, 0, 0, 80) * vis);
             // Narrow the wingspan slightly when banked for a hint of tilt.
             var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), MathF.Max(MathF.Cos(_fm.Gamma), 0.3f)) * ps;
-            _spitfire.Draw(_sb, centre, _fm.Heading, squash, Color.White);
+            _spitfire.Draw(_sb, centre, _fm.Heading, squash, _fm.Gamma, Color.White);
         }
         else
         {
