@@ -65,7 +65,11 @@ public sealed class FlightModel
     private bool _wheelSteered;                    // the command came from the wheel: the nose goes straight to it and locks there
     public float Throttle = 0.55f;
     private bool _pitchHeld;
-    public bool Aiming;                            // the aimer is up: pitch input turns fine and the nose holds where it is
+    public bool Aiming;                            // the aimer is up: the aim assist flies the pitch
+    public float AimElevationDeg;                  // while aiming: the elevation the assist points the nose at
+    public float AimTrimDeg;                       // while aiming: the player's fine adjustment on top of it
+    private const float AimTrimMaxDeg = 6f;        // how far the player can trim off the assist's aim point
+    private const float AimKeyRateDeg = 0.25f;     // W/S trim rate while aiming, deg per tick
     private bool _keysBlocked;                     // a pitch key held when the aimer came up is ignored until it is let go
     public float Bank, Heading;
     public float VerticalRateScale = 1f;           // 1 = realistic; 2 = arcade (altitude changes twice as fast)
@@ -117,6 +121,7 @@ public sealed class FlightModel
     public void WheelPitch(float deg)
     {
         if (deg == 0f) return;
+        if (Aiming) { AimTrimDeg = MathHelper.Clamp(AimTrimDeg + deg, -AimTrimMaxDeg, AimTrimMaxDeg); return; }
         var g = MathHelper.ToDegrees(Gamma);
         float lo = MathF.Max(-MaxDiveDeg, g - WheelLeadDeg), hi = MathF.Min(MaxClimbDeg, g + WheelLeadDeg);
         PitchCmdDeg = MathHelper.Clamp(PitchCmdDeg + deg, MathF.Min(lo, hi), hi);
@@ -124,11 +129,11 @@ public sealed class FlightModel
         _pitchHeld = false;
     }
 
-    /// <summary>The aimer has just come up. Stop the nose where it is: drop whatever the wheel or a held key was
-    /// still asking for beyond it, so the pitch that found the target doesn't carry on past it.</summary>
+    /// <summary>The aimer has just come up and the assist takes the pitch: drop whatever the wheel or a held key
+    /// was still asking for, start with no trim, and ignore a held key until it is let go.</summary>
     public void AimAcquired()
     {
-        PitchCmdDeg = MathHelper.Clamp(MathHelper.ToDegrees(Gamma), -MaxDiveDeg, MaxClimbDeg);
+        AimTrimDeg = 0f;
         _wheelSteered = true;
         _pitchHeld = false;
         _keysBlocked = true;
@@ -137,6 +142,7 @@ public sealed class FlightModel
     /// <summary>Middle click: swing the nose back to level.</summary>
     public void WheelLevel()
     {
+        if (Aiming) { AimTrimDeg = 0f; return; }
         PitchCmdDeg = 0f;
         _wheelSteered = true;
         _pitchHeld = false;
@@ -158,19 +164,27 @@ public sealed class FlightModel
         Throttle = MathHelper.Clamp(Throttle + throttleKey * 0.012f, 0f, 1f);
         if (pitchKey == 0f) _keysBlocked = false;
         if (_keysBlocked) pitchKey = 0f;
-        if (pitchKey != 0f)
+        if (Aiming)
         {
-            // While a key is held the command runs ahead of the nose; slowly while aiming, for fine adjustment.
-            var keyRate = Aiming ? 1f : 3f;
-            PitchCmdDeg = pitchKey > 0 ? MathF.Min(MaxClimbDeg, PitchCmdDeg + keyRate) : MathF.Max(-MaxDiveDeg, PitchCmdDeg - keyRate);
+            // Aim assist flies the pitch: the nose goes to the target's elevation, plus whatever trim the player
+            // has dialled in with the keys or wheel. When the aimer drops, the command stays where it was, so the
+            // nose holds there.
+            AimTrimDeg = MathHelper.Clamp(AimTrimDeg + pitchKey * AimKeyRateDeg, -AimTrimMaxDeg, AimTrimMaxDeg);
+            PitchCmdDeg = MathHelper.Clamp(AimElevationDeg + AimTrimDeg, -MaxDiveDeg, MaxClimbDeg);
+            _wheelSteered = true;
+            _pitchHeld = false;
+        }
+        else if (pitchKey != 0f)
+        {
+            // While a key is held the command runs ahead of the nose.
+            PitchCmdDeg = pitchKey > 0 ? MathF.Min(MaxClimbDeg, PitchCmdDeg + 3f) : MathF.Max(-MaxDiveDeg, PitchCmdDeg - 3f);
             _pitchHeld = true;
             _wheelSteered = false; // the keys take over from the wheel
         }
         else if (_pitchHeld)
         {
             // On release, settle at the detent nearest where the nose actually is, not where the command got to.
-            // While aiming, hold exactly where the nose is instead: a detent could swing it off the target.
-            PitchCmdDeg = Aiming ? MathHelper.ToDegrees(Gamma) : SnapPitch(MathHelper.ToDegrees(Gamma));
+            PitchCmdDeg = SnapPitch(MathHelper.ToDegrees(Gamma));
             _pitchHeld = false;
         }
         Bank += (targetBank - Bank) * bankResponse;

@@ -484,13 +484,15 @@ public sealed class Gunsight
     /// <summary>Draws the view into rect with a frame and the reflector-sight reticle. SpriteBatch must be running.</summary>
     public void Draw(SpriteBatch sb, Texture2D pixel, Rectangle rect, float scale, bool firing, float alpha)
     {
-        // A blank panel plate sits behind the glass; the view and reticle fade in over it.
-        sb.Draw(pixel, rect, new Color(26, 28, 32));
-        if (alpha > 0.01f) sb.Draw(_final, rect, Color.White * alpha);
+        // The window is big enough to cover the middle of the screen, so all of it (plate, view, frame, reticle)
+        // fades in with the aimer and is gone when there is nothing to aim at.
+        if (alpha <= 0.01f) return;
+        sb.Draw(pixel, rect, new Color(26, 28, 32) * alpha);
+        sb.Draw(_final, rect, Color.White * alpha);
 
         // Frame.
         var b = Math.Max(2, (int)(4 * scale));
-        var frame = new Color(12, 12, 14);
+        var frame = new Color(12, 12, 14) * alpha;
         sb.Draw(pixel, new Rectangle(rect.X - b, rect.Y - b, rect.Width + 2 * b, b), frame);
         sb.Draw(pixel, new Rectangle(rect.X - b, rect.Bottom, rect.Width + 2 * b, b), frame);
         sb.Draw(pixel, new Rectangle(rect.X - b, rect.Y, b, rect.Height), frame);
@@ -498,7 +500,6 @@ public sealed class Gunsight
 
         // Reticle: amber ring, centre dot, four stadia ticks, and a pair of range bars.
         var amber = new Color(255, 190, 70) * alpha;
-        if (alpha <= 0.01f) return;
         var c = new Vector2(rect.Center.X, rect.Center.Y);
         var radius = rect.Height * 0.40f;
         sb.Draw(_ring, c, null, amber * 0.95f, 0f, new Vector2(128f), radius * 2f / 256f, SpriteEffects.None, 0f);

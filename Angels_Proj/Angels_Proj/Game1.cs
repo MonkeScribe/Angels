@@ -35,6 +35,8 @@ public class Game1 : Game
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
     private const float AimHoldRadius = 2f;      // once the aimer is up, the mouse can stray this much further before it drops
+    private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
+    private const float AimYawTrim = 0.06f;      // rad: how far the mouse can pull the assist's heading off the target
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -72,6 +74,8 @@ public class Game1 : Game
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
     private int _fireCooldown, _gun;
+    private Traffic.Plane _lastAimed;            // the target the assist tracked last tick, for its bearing rate
+    private float _lastAimBearing, _lastAimElev;
     private Traffic.Plane _tracked; // the plane the aimer is on: under the mouse and in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
@@ -407,10 +411,28 @@ public class Game1 : Game
         var camFt = World.ToFt(_pos, _fm.Altitude);
         _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
-        // Aim assist: getting the aimer up is the objective. The moment it comes up the nose stops where it is, so
-        // the pitch that found the target doesn't carry straight on past it, and from then on pitch input is fine.
-        // It never steers toward the target itself.
-        if (target && !_fm.Aiming) _fm.AimAcquired();
+        // Aim assist: getting the aimer up is the objective. From then on the game flies the plane, rolling and
+        // pitching to keep the target in the sight, aimed a little ahead along its motion. The player only trims:
+        // the wheel and W/S nudge the pitch, the mouse nudges the heading.
+        float aimBearing = 0f, targetBearing = 0f;
+        if (target)
+        {
+            var rel = World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt;
+            var bearing = MathF.Atan2(rel.X, -rel.Z);
+            var elev = MathF.Atan2(rel.Y, MathF.Sqrt(rel.X * rel.X + rel.Z * rel.Z));
+            float bearingRate = 0f, elevRate = 0f;
+            if (_lastAimed == _tracked)
+            {
+                bearingRate = MathHelper.WrapAngle(bearing - _lastAimBearing);
+                elevRate = elev - _lastAimElev;
+            }
+            _lastAimed = _tracked; _lastAimBearing = bearing; _lastAimElev = elev;
+            targetBearing = bearing;
+            aimBearing = bearing + bearingRate * AimLeadTicks;
+            _fm.AimElevationDeg = MathHelper.ToDegrees(elev + elevRate * AimLeadTicks);
+            if (!_fm.Aiming) _fm.AimAcquired();
+        }
+        else _lastAimed = null;
         _fm.Aiming = target;
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
@@ -450,9 +472,17 @@ public class Game1 : Game
         if (middle && !_lastMiddle) _fm.WheelLevel();
         _lastMiddle = middle;
 
-        // Bank toward the cursor's bearing; level out inside the deadzone.
+        // Bank toward the cursor's bearing; level out inside the deadzone. While aiming, bank toward the target
+        // instead, with the cursor only trimming the heading a little either side of it.
         var targetBank = 0f;
-        if (d.Length() > DeadzonePx)
+        if (target)
+        {
+            var trim = d.Length() > DeadzonePx
+                ? MathHelper.Clamp(MathHelper.WrapAngle(MathF.Atan2(d.X, -d.Y) - targetBearing), -AimYawTrim, AimYawTrim) : 0f;
+            var err = MathHelper.WrapAngle(aimBearing + trim - _fm.Heading);
+            targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
+        }
+        else if (d.Length() > DeadzonePx)
         {
             var err = MathHelper.WrapAngle(MathF.Atan2(d.X, -d.Y) - _fm.Heading);
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;

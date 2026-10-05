@@ -298,11 +298,12 @@ public sealed class Instruments
     /// <summary>The free space between the two instrument plates, where the gunsight window goes.</summary>
     public static Rectangle GunsightRect(Rectangle viewport, float scale)
     {
-        float d = 124f * scale, pad = 10f * scale, margin = 12f * scale;
-        var plateH = d + 2 * pad;
-        // A square window centred between the clusters: just the reticle and what is inside it.
-        var side = (int)plateH;
-        return new Rectangle(viewport.Width / 2 - side / 2, (int)(viewport.Height - margin - plateH), side, side);
+        float d = 124f * scale, gap = 9f * scale, pad = 10f * scale, margin = 12f * scale;
+        var plateW = 3 * d + 2 * gap + 2 * pad;
+        var inset = 12f * scale;
+        // A square window filling the width between the clusters, standing on the same baseline as the plates.
+        var side = (int)(viewport.Width - 2 * (margin + plateW + inset));
+        return new Rectangle(viewport.Width / 2 - side / 2, (int)(viewport.Height - margin) - side, side, side);
     }
 
     /// <summary>Draws both clusters along the bottom of the screen. Needs the sprite batch already begun.</summary>
