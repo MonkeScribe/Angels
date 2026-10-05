@@ -31,8 +31,8 @@ public sealed class FlightModel
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
-    private const float StickEase = 0.2f;          // fraction of the gap the eased stick closes each tick: ~4 ticks to be most of the way
-    private const float StickAuthorityDeg = 60f;   // full stick, either way, asks for this much flight-path angle beyond the command
+    private const float WheelSlewDeg = 5f;         // the wheel swings the nose this fast (deg per tick), ignoring the g limit
+    private const float WheelLeadDeg = 25f;        // and never lets the command get further than this ahead of the nose
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
 
@@ -61,9 +61,7 @@ public sealed class FlightModel
     public float Speed;                            // true airspeed, ft/s
     public float Gamma;                            // flight path angle, rad (+ = climbing)
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
-    public float PitchStick;                       // wheel stick on top of the command, -1 (push) to +1 (pull); stays where it is left
-    private float _stickEased;                     // the stick as the nose sees it: eases to PitchStick, so each notch is a smooth sweep
-    public float PitchTargetDeg => MathHelper.Clamp(PitchCmdDeg + PitchStick * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg);
+    private bool _wheelSteered;                    // the command came from the wheel: the nose goes straight to it and locks there
     public float Throttle = 0.55f;
     private bool _pitchHeld;
     public float Bank, Heading;
@@ -112,6 +110,25 @@ public sealed class FlightModel
         return 0f;
     }
 
+    /// <summary>The wheel moves the nose by this many degrees of flight path, straight away.</summary>
+    public void WheelPitch(float deg)
+    {
+        if (deg == 0f) return;
+        var g = MathHelper.ToDegrees(Gamma);
+        float lo = MathF.Max(-MaxDiveDeg, g - WheelLeadDeg), hi = MathF.Min(MaxClimbDeg, g + WheelLeadDeg);
+        PitchCmdDeg = MathHelper.Clamp(PitchCmdDeg + deg, MathF.Min(lo, hi), hi);
+        _wheelSteered = true;
+        _pitchHeld = false;
+    }
+
+    /// <summary>Middle click: swing the nose back to level.</summary>
+    public void WheelLevel()
+    {
+        PitchCmdDeg = 0f;
+        _wheelSteered = true;
+        _pitchHeld = false;
+    }
+
     /// <summary>Nearest 10-degree detent, within the climb/dive limits (6 -> 10, 3 -> 0, 16 -> 20), judged from the nose's actual angle.</summary>
     public static float SnapPitch(float deg) =>
         MathHelper.Clamp(MathF.Round(deg / PitchDetentDeg, MidpointRounding.AwayFromZero) * PitchDetentDeg,
@@ -128,13 +145,10 @@ public sealed class FlightModel
         Throttle = MathHelper.Clamp(Throttle + throttleKey * 0.012f, 0f, 1f);
         if (pitchKey != 0f)
         {
-            // The keys take over from the wheel: whatever the stick was asking for becomes the command.
-            PitchCmdDeg = MathHelper.Clamp(PitchCmdDeg + _stickEased * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg);
-            PitchStick = 0f;
-            _stickEased = 0f;
             // While a key is held the command runs ahead of the nose.
             PitchCmdDeg = pitchKey > 0 ? MathF.Min(MaxClimbDeg, PitchCmdDeg + 3f) : MathF.Max(-MaxDiveDeg, PitchCmdDeg - 3f);
             _pitchHeld = true;
+            _wheelSteered = false; // the keys take over from the wheel
         }
         else if (_pitchHeld)
         {
@@ -166,17 +180,19 @@ public sealed class FlightModel
 
         // Pitch stick commands a flight-path angle; the wing's load factor decides how fast we get there.
         // High Mach stiffens the controls (compressibility); a low-energy wing can't pull at all.
-        // The stick adds to the command. A wheel notch jumps PitchStick, so the nose follows it eased in rather than
-        // in steps, and while the wheel is in use the nose is asked to move much faster than the keys ask.
-        PitchStick = MathHelper.Clamp(PitchStick, -1f, 1f);
-        _stickEased += (PitchStick - _stickEased) * StickEase;
-        var gammaTarget = MathHelper.ToRadians(MathHelper.Clamp(PitchCmdDeg + _stickEased * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg));
-        var wheel = MathF.Abs(PitchStick) > 0.001f || MathF.Abs(_stickEased) > 0.001f ? 1f : 0f;
-        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * (3f + 8f * wheel), -0.9f - 1.8f * wheel, 0.9f + 1.8f * wheel);
+        var gammaTarget = MathHelper.ToRadians(PitchCmdDeg);
+        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * 3f, -0.9f, 0.9f);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
         var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNNeg, nWing), nAvail);
-        Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
+        if (_wheelSteered)
+        {
+            // The wheel points the nose: it goes straight to the command at a fixed swing rate, whatever the wing
+            // could pull, and stops dead on it. (n above still sets the drag, so a hard swing costs speed.)
+            Gamma += MathHelper.Clamp(gammaTarget - Gamma, -MathHelper.ToRadians(WheelSlewDeg), MathHelper.ToRadians(WheelSlewDeg));
+            if (MathF.Abs(gammaTarget - Gamma) > MathHelper.ToRadians(1f)) n = gammaTarget > Gamma ? nAvail : -MathF.Min(MaxNNeg, nWing);
+        }
+        else Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
         Gamma = MathHelper.Clamp(Gamma, -MathHelper.PiOver2 * 0.995f, MathHelper.PiOver2 * 0.995f);
         LoadFactor = n + nTurn - 1f;
 

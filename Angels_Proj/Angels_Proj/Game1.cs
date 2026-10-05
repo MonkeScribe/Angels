@@ -30,9 +30,9 @@ public class Game1 : Game
     private const float SkidDecelFtS2 = 18f;                                  // belly friction
     private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
-    // The mouse wheel is a stick that stays where you leave it: each notch moves it the same amount either way, so
-    // scrolling fast is just more notches. It holds until you scroll back, press W/S or middle-click.
-    private const float WheelKick = 0.2f;        // stick travel per notch (120 units); about five notches is full stick
+    // The mouse wheel points the nose: each notch swings it this much, the same either way, and when the wheel stops
+    // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
+    private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -425,13 +425,13 @@ public class Game1 : Game
         var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
-        // Mouse wheel: each notch moves the stick, and it stays put. Middle click levels the nose again.
+        // Mouse wheel: each notch swings the nose, and it stops dead where the wheel stops.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _fm.PitchStick = MathHelper.Clamp(_fm.PitchStick + notches * WheelKick, -1f, 1f);
+        _fm.WheelPitch(notches * WheelDegPerNotch);
         var middle = m.MiddleButton == ButtonState.Pressed;
-        if (middle && !_lastMiddle) { _fm.PitchCmdDeg = 0f; _fm.PitchStick = 0f; }
+        if (middle && !_lastMiddle) _fm.WheelLevel();
         _lastMiddle = middle;
 
         // Bank toward the cursor's bearing; level out inside the deadzone.
@@ -812,7 +812,7 @@ public class Game1 : Game
         }
         var ty = y + line * rowH;
         PixelFont.Draw(_sb, _pixel, $"TAS {_fm.TasMph:0} MPH   MACH {_fm.Mach:0.00}   G {_fm.LoadFactor:0.0}", new Vector2(x, ty), px, white);
-        PixelFont.Draw(_sb, _pixel, $"PITCH {MathHelper.ToDegrees(_fm.Gamma):+0;-0;0}  SET {_fm.PitchTargetDeg:+0;-0;0}", new Vector2(x, ty + 10 * px), px, white);
+        PixelFont.Draw(_sb, _pixel, $"PITCH {MathHelper.ToDegrees(_fm.Gamma):+0;-0;0}  SET {_fm.PitchCmdDeg:+0;-0;0}", new Vector2(x, ty + 10 * px), px, white);
         PixelFont.Draw(_sb, _pixel, $"HITS {_traffic.Ignited}", new Vector2(x, ty + 20 * px), px, white);
         if (_arcade) PixelFont.Draw(_sb, _pixel, "ARCADE", new Vector2(x, ty + 30 * px), px, new Color(255, 206, 84));
 
