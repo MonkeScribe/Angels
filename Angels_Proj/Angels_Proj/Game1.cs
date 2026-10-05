@@ -34,6 +34,7 @@ public class Game1 : Game
     // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
+    private const float AimHoldRadius = 2f;      // once the aimer is up, the mouse can stray this much further before it drops
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -237,6 +238,7 @@ public class Game1 : Game
             var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
             var d = Vector2.Distance(screen, mouse);
             var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
+            if (p == _tracked) radius *= AimHoldRadius;   // easier to stay on than to get on
             if (d < radius && d < bestD) { best = p; bestD = d; }
         }
         return best;
@@ -405,6 +407,11 @@ public class Game1 : Game
         var camFt = World.ToFt(_pos, _fm.Altitude);
         _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
+        // Aim assist: getting the aimer up is the objective. The moment it comes up the nose stops where it is, so
+        // the pitch that found the target doesn't carry straight on past it, and from then on pitch input is fine.
+        // It never steers toward the target itself.
+        if (target && !_fm.Aiming) _fm.AimAcquired();
+        _fm.Aiming = target;
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
         var dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
