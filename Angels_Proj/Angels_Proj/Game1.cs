@@ -42,9 +42,7 @@ public class Game1 : Game
     private static readonly float AimYawTrimMax = MathF.PI; // free: once the assist lets go the player can follow the target anywhere
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
-    // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
-    private const int FireIntervalTicks = 5;        // 12 rounds a second
-    private const float MaxRangeFt = 2000f, ConvergeFt = 750f, SpreadRad = 0.008f;
+    // Guns: eight .303 Brownings firing real rounds; see Guns.cs.
 
     private const string SecretCode = "ANGEL";
 
@@ -76,7 +74,7 @@ public class Game1 : Game
     private Gunsight _gunsight;
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
-    private int _fireCooldown, _gun;
+    private readonly Guns _guns;
     private int _assistTicks;                    // ticks left of the assist flying onto the target
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
     private bool _mouseAim;                      // the pointer is captured for mouse aim
@@ -107,6 +105,7 @@ public class Game1 : Game
     public Game1()
     {
         _traffic = new Traffic(_fx);
+        _guns = new Guns(_rng);
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
@@ -167,6 +166,7 @@ public class Game1 : Game
         _fm = new FlightModel { VerticalRateScale = _arcade ? 2f : 1f };
         _phase = Phase.Flying;
         _particles.Clear();
+        _guns.Rearm();
         _reason = "";
         _phaseTime = 0f;
     }
@@ -254,35 +254,17 @@ public class Game1 : Game
         return best;
     }
 
-    private float Spread() => ((float)_rng.NextDouble() - 0.5f) * SpreadRad;
-
-    /// <summary>Fires one round from alternating wing guns: a ray from the muzzle to wherever it first meets a plane.</summary>
+    /// <summary>One tick with the trigger held: every gun fires its share of rounds, each leaving at muzzle velocity
+    /// plus the plane's own velocity, and each wing that fired flashes.</summary>
     private void Fire()
     {
         _firing = true;
-        if (_fireCooldown > 0) return;
-        _fireCooldown = FireIntervalTicks;
-
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
-        var cam = World.ToFt(_pos, _fm.Altitude);
-        _gun = 1 - _gun;
-        _spitfire.Shot(_gun, _rng);
-        var muzzle = cam + r * (_gun == 0 ? -8f : 8f) - u * 1.2f + f * 8f;
-        var dir = Vector3.Normalize(cam + f * ConvergeFt - muzzle);
-        dir = Vector3.Normalize(dir + r * Spread() + u * Spread());
-
-        var reach = MaxRangeFt;
-        if (_traffic.RayHit(muzzle, dir, MaxRangeFt, out var plane, out var dist, out var damage))
-        {
-            reach = dist;
-            _traffic.Damage(plane, damage);
-            for (var i = 0; i < 3; i++) _fx.Spark(muzzle + dir * dist);
-        }
-
-        // A short tracer dash somewhere along the ray.
-        var start = 60f + (float)_rng.NextDouble() * 500f;
-        if (start < reach)
-            _tracers.Add(new Gunsight.Tracer { A = muzzle + dir * start, B = muzzle + dir * MathF.Min(reach, start + 170f), Life = 3 });
+        var gs = _fm.GroundSpeed;
+        var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
+        var wings = _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel);
+        if ((wings & 1) != 0) _spitfire.Shot(0, _rng);
+        if ((wings & 2) != 0) _spitfire.Shot(1, _rng);
     }
 
     private bool Pressed(Keys k) => _kb.IsKeyDown(k) && !_prevKb.IsKeyDown(k);
@@ -402,13 +384,9 @@ public class Game1 : Game
         var hd = 0.5f * MathF.Sqrt(vp.Width * vp.Width + vp.Height * vp.Height);
         _traffic.Update(_pos, _fm.Altitude, f => hd * f / (Scale * GroundZoom), DistFactor);
         _fx.Update();
-        for (var i = _tracers.Count - 1; i >= 0; i--)
-        {
-            var t = _tracers[i];
-            if (--t.Life <= 0) _tracers.RemoveAt(i); else _tracers[i] = t;
-        }
+        _guns.Update(_traffic, _fx);
+        _guns.Tracers(_tracers);
         _firing = false;
-        if (_fireCooldown > 0) _fireCooldown--;
         _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
 
         // The aimer comes up when the mouse is over a plane on the map that is also inside the gunsight's view.
@@ -625,6 +603,19 @@ public class Game1 : Game
             var size = Math.Max(1, (int)(p.Size * z * (0.5f + 0.5f * t)));
             var pos = centre + (p.Pos - _pos) * z;
             _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
+        }
+
+        // Tracers on the map: short glowing streaks, placed and scaled by their height like everything else.
+        foreach (var tr in _tracers)
+        {
+            var zt = Scale * GroundZoom / MathF.Max(DistFactor(tr.B.Y), 0.2f);
+            var a = centre + (new Vector2(tr.A.X, tr.A.Z) * World.PxPerFoot - _pos) * zt;
+            var b = centre + (new Vector2(tr.B.X, tr.B.Z) * World.PxPerFoot - _pos) * zt;
+            var dl = b - a;
+            var len = dl.Length();
+            if (len < 0.5f) continue;
+            _sb.Draw(_pixel, (a + b) / 2f, null, new Color(255, 214, 120) * 0.9f, MathF.Atan2(dl.Y, dl.X), new Vector2(0.5f, 0.5f),
+                new Vector2(len, MathF.Max(1f, 1.5f * s)), SpriteEffects.None, 0f);
         }
 
         DrawTraffic(centre, TrafficPass.Above);
@@ -890,6 +881,8 @@ public class Game1 : Game
         // "HUD BARS" in the debug menu adds the old digital bars back.
         var line = 0;
         Row(line++, "THROTTLE", $"{_fm.Throttle * 100f:0}%", _fm.Throttle, new Color(94, 224, 160));
+        var ammo = _guns.AmmoLeft;
+        Row(line++, "AMMO", $"{ammo}", ammo / (float)(Guns.GunCount * Guns.RoundsPerGun), new Color(255, 190, 70));
         if (_hudBars)
         {
             var ias = _fm.IasMph;
