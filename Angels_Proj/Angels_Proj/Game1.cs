@@ -34,7 +34,6 @@ public class Game1 : Game
     // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
-    private const float AimHoldRadius = 2f;      // once the aimer is up, the mouse can stray this much further before it drops
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     private const float AimYawTrim = 0.06f;      // rad: how far the mouse can pull the assist's heading off the target
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
@@ -76,7 +75,7 @@ public class Game1 : Game
     private int _fireCooldown, _gun;
     private Traffic.Plane _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
-    private Traffic.Plane _tracked; // the plane the aimer is on: under the mouse and in the sight's view
+    private Traffic.Plane _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
     private Spitfire _spitfire;
@@ -242,7 +241,6 @@ public class Game1 : Game
             var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
             var d = Vector2.Distance(screen, mouse);
             var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
-            if (p == _tracked) radius *= AimHoldRadius;   // easier to stay on than to get on
             if (d < radius && d < bestD) { best = p; bestD = d; }
         }
         return best;
@@ -403,13 +401,15 @@ public class Game1 : Game
         if (_fireCooldown > 0) _fireCooldown--;
         _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
 
-        // The aimer comes up only when the mouse is over a plane on the map and that plane is also inside the
-        // gunsight's view; if either stops being true it goes out.
+        // The aimer comes up when the mouse is over a plane on the map that is also inside the gunsight's view.
+        // After that the mouse is free: the aimer stays on that plane until the sight loses it.
         var rect = Instruments.GunsightRect(vp.Bounds, Scale);
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
-        _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
+        if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) ||
+            !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
+            _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
         // Aim assist: getting the aimer up is the objective. From then on the game flies the plane, rolling and
         // pitching to keep the target in the sight, aimed a little ahead along its motion. The player only trims:
