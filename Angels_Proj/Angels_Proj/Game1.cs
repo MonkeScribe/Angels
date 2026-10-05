@@ -35,7 +35,10 @@ public class Game1 : Game
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
-    private const float AimYawTrim = 0.06f;      // rad: how far the mouse can pull the assist's heading off the target
+    // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
+    // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
+    private const float AimMouseDegPerPx = 0.05f; // aim swing per px of mouse movement at 720p
+    private static readonly float AimYawTrimMax = MathHelper.ToRadians(12f); // as far as the pitch trim: past the sight's edge
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -73,6 +76,8 @@ public class Game1 : Game
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
     private int _fireCooldown, _gun;
+    private bool _mouseAim;                      // the pointer is captured for mouse aim
+    private float _aimYaw;                       // rad: the mouse's heading offset from the target
     private Traffic.Plane _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
     private Traffic.Plane _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
@@ -364,6 +369,8 @@ public class Game1 : Game
         TrackSecretCode();
         if (_menuOpen)
         {
+            IsMouseVisible = true; // the menu needs the pointer, even mid-aim
+            _mouseAim = false;
             UpdateMenu(m); // the game is paused while the menu is open
             _lastWheel = m.ScrollWheelValue;
             _prevLeft = m.LeftButton == ButtonState.Pressed;
@@ -413,8 +420,8 @@ public class Game1 : Game
         var target = _phase == Phase.Flying && _tracked != null;
         // Aim assist: getting the aimer up is the objective. From then on the game flies the plane, rolling and
         // pitching to keep the target in the sight, aimed a little ahead along its motion. The player only trims:
-        // the wheel and W/S nudge the pitch, the mouse nudges the heading.
-        float aimBearing = 0f, targetBearing = 0f;
+        // the mouse moves the aim point (below), and the wheel and W/S nudge the pitch.
+        var aimBearing = 0f;
         if (target)
         {
             var rel = World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt;
@@ -427,13 +434,39 @@ public class Game1 : Game
                 elevRate = elev - _lastAimElev;
             }
             _lastAimed = _tracked; _lastAimBearing = bearing; _lastAimElev = elev;
-            targetBearing = bearing;
             aimBearing = bearing + bearingRate * AimLeadTicks;
             _fm.AimElevationDeg = MathHelper.ToDegrees(elev + elevRate * AimLeadTicks);
             if (!_fm.Aiming) _fm.AimAcquired();
         }
         else _lastAimed = null;
         _fm.Aiming = target;
+
+        // Mouse aim: while the aimer is up the pointer disappears and the mouse moves the aim point instead,
+        // left/right swinging the heading the assist rolls toward, up/down the pitch. Each tick the pointer is put
+        // back in the middle so only its movement counts. Swinging past the sight's edge loses the target, which
+        // drops the aimer and brings the pointer back.
+        if (target)
+        {
+            var mid = new Point(vp.Width / 2, vp.Height / 2);
+            if (!_mouseAim)
+            {
+                _mouseAim = true;
+                _aimYaw = 0f;
+                IsMouseVisible = false;
+            }
+            else if (IsActive)
+            {
+                var k = AimMouseDegPerPx / Scale;
+                _aimYaw = MathHelper.Clamp(_aimYaw + MathHelper.ToRadians(d.X * k), -AimYawTrimMax, AimYawTrimMax);
+                _fm.AimTrimBy(-d.Y * k);
+            }
+            if (IsActive) Mouse.SetPosition(mid.X, mid.Y);
+        }
+        else if (_mouseAim)
+        {
+            _mouseAim = false;
+            IsMouseVisible = true;
+        }
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
         var dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
@@ -473,13 +506,11 @@ public class Game1 : Game
         _lastMiddle = middle;
 
         // Bank toward the cursor's bearing; level out inside the deadzone. While aiming, bank toward the target
-        // instead, with the cursor only trimming the heading a little either side of it.
+        // instead, offset by the mouse aim.
         var targetBank = 0f;
         if (target)
         {
-            var trim = d.Length() > DeadzonePx
-                ? MathHelper.Clamp(MathHelper.WrapAngle(MathF.Atan2(d.X, -d.Y) - targetBearing), -AimYawTrim, AimYawTrim) : 0f;
-            var err = MathHelper.WrapAngle(aimBearing + trim - _fm.Heading);
+            var err = MathHelper.WrapAngle(aimBearing + _aimYaw - _fm.Heading);
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
         }
         else if (d.Length() > DeadzonePx)

@@ -68,7 +68,7 @@ public sealed class FlightModel
     public bool Aiming;                            // the aimer is up: the aim assist flies the pitch
     public float AimElevationDeg;                  // while aiming: the elevation the assist points the nose at
     public float AimTrimDeg;                       // while aiming: the player's fine adjustment on top of it
-    private const float AimTrimMaxDeg = 6f;        // how far the player can trim off the assist's aim point
+    private const float AimTrimMaxDeg = 12f;       // how far the player can trim off the assist's aim point (past the sight's edge)
     private const float AimKeyRateDeg = 0.25f;     // W/S trim rate while aiming, deg per tick
     private bool _keysBlocked;                     // a pitch key held when the aimer came up is ignored until it is let go
     public float Bank, Heading;
@@ -138,6 +138,9 @@ public sealed class FlightModel
         _pitchHeld = false;
         _keysBlocked = true;
     }
+
+    /// <summary>Mouse aim while the aimer is up: move the pitch trim by this many degrees.</summary>
+    public void AimTrimBy(float deg) => AimTrimDeg = MathHelper.Clamp(AimTrimDeg + deg, -AimTrimMaxDeg, AimTrimMaxDeg);
 
     /// <summary>Middle click: swing the nose back to level.</summary>
     public void WheelLevel()
