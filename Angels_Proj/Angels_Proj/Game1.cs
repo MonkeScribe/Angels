@@ -71,9 +71,7 @@ public class Game1 : Game
     private Traffic.Plane _tracked; // the plane the gunsight is following: hovered with the mouse, kept while it stays in view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
-    private Texture2D[] _planes; // one sprite per 10 degrees of pitch, index = step + PitchStepsDown
-
-    private const int PitchStepsDown = 9, PitchStepsUp = 6; // -90 .. +60 degrees
+    private Spitfire _spitfire;
 
     private Vector2 _pos;      // world position of the plane (world px at 720p; screen centre)
     private FlightModel _fm = new();
@@ -126,8 +124,7 @@ public class Game1 : Game
         _grass = Art.Grass(GraphicsDevice);
         _aiPlanes = new Texture2D[Traffic.Colors.Length];
         for (var i = 0; i < _aiPlanes.Length; i++) _aiPlanes[i] = Art.Plane(GraphicsDevice, 0f, Traffic.Colors[i]);
-        _planes = new Texture2D[PitchStepsDown + PitchStepsUp + 1];
-        for (var i = 0; i < _planes.Length; i++) _planes[i] = Art.Plane(GraphicsDevice, (i - PitchStepsDown) * 10f);
+        _spitfire = new Spitfire(GraphicsDevice, _pixel);
         _tree = Art.Tree(GraphicsDevice);
         _clouds = new[] { Art.Cloud(GraphicsDevice, 11), Art.Cloud(GraphicsDevice, 23), Art.Cloud(GraphicsDevice, 37) };
         _houses = new[]
@@ -253,6 +250,7 @@ public class Game1 : Game
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
         var cam = World.ToFt(_pos, _fm.Altitude);
         _gun = 1 - _gun;
+        _spitfire.Shot(_gun, _rng);
         var muzzle = cam + r * (_gun == 0 ? -8f : 8f) - u * 1.2f + f * 8f;
         var dir = Vector3.Normalize(cam + f * ConvergeFt - muzzle);
         dir = Vector3.Normalize(dir + r * Spread() + u * Spread());
@@ -393,6 +391,7 @@ public class Game1 : Game
         }
         _firing = false;
         if (_fireCooldown > 0) _fireCooldown--;
+        _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
 
         // The gunsight lights up when the mouse hovers over a plane on the map, and stays lit for as long as that
         // plane's model is in the sight's view or the mouse is still over a plane.
@@ -520,20 +519,17 @@ public class Game1 : Game
         if (_cloudsOn) DrawClouds(centre, CloudPass.Below);
         DrawTraffic(centre, TrafficPass.Below);
 
-        // Plane: pick the sprite for the nose's pitch step (10 degree increments). Altitude reads as size
-        // and as how far the shadow drifts from the plane.
+        // Plane: pitching foreshortens the fuselage as seen from above. Altitude reads as size and as how far
+        // the shadow drifts from the plane.
         if (_phase != Phase.Wrecked)
         {
-            var step = (int)MathF.Round(MathHelper.ToDegrees(_fm.Gamma) / 10f, MidpointRounding.AwayFromZero);
-            var tex = _planes[Math.Clamp(step, -PitchStepsDown, PitchStepsUp) + PitchStepsDown];
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
-            var origin = new Vector2(48, 48);
-            _sb.Draw(tex, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, null, new Color(0, 0, 0, 80) * vis, _fm.Heading,
-                origin, ps * 0.9f, SpriteEffects.None, 0f);
+            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
+            _spitfire.DrawShadow(_sb, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, _fm.Heading, new Vector2(ps * 0.9f),
+                new Color(0, 0, 0, 80) * vis);
             // Narrow the wingspan slightly when banked for a hint of tilt.
-            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps;
-            _sb.Draw(tex, centre, null, Color.White, _fm.Heading, origin, squash, SpriteEffects.None, 0f);
+            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), MathF.Max(MathF.Cos(_fm.Gamma), 0.3f)) * ps;
+            _spitfire.Draw(_sb, centre, _fm.Heading, squash, _fm.Gamma, Color.White);
         }
         else
         {
