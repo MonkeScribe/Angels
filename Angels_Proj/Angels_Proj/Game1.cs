@@ -31,7 +31,7 @@ public class Game1 : Game
     private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
     // The mouse wheel is a spring-centred stick: each notch kicks it, so scroll speed sets the deflection, the same
-    // either way, and it falls back to neutral when the wheel stops.
+    // either way, and it falls back to neutral when the wheel stops (unless the gunsight is up).
     private const float WheelKick = 0.15f;       // stick deflection per notch (120 units)
     private const float StickReturn = 0.9f;      // stick left per tick: ~7 ticks to halve
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
@@ -438,11 +438,12 @@ public class Game1 : Game
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
         // Mouse wheel: scrolling pulls or pushes the stick in proportion to how fast it turns, and it springs back
-        // to neutral. Middle click returns the keys' pitch command to level.
+        // to neutral, except while the gunsight is up, when it stays where it is so the aim can be held. Middle
+        // click returns the keys' pitch command to level.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _fm.PitchStick = MathHelper.Clamp((_fm.PitchStick + notches * WheelKick) * StickReturn, -1f, 1f);
+        _fm.PitchStick = MathHelper.Clamp((_fm.PitchStick + notches * WheelKick) * (target ? 1f : StickReturn), -1f, 1f);
         var middle = m.MiddleButton == ButtonState.Pressed;
         if (middle && !_lastMiddle) { _fm.PitchCmdDeg = 0f; _fm.PitchStick = 0f; }
         _lastMiddle = middle;
