@@ -6,12 +6,19 @@ using Microsoft.Xna.Framework.Graphics;
 namespace Angels_Proj;
 
 /// <summary>
-/// The player's Spitfire, drawn from the pixel art in Content/Sprites (256x256, nose up). The art has no
-/// propeller: it is drawn here, seen exactly edge-on from above, so the whole propeller is a line along the span.
-/// Each blade reaches its radius times the cosine of its angle round the hub, so as it turns its yellow tip
+/// The player's Spitfire, drawn from pixel art in Content/Sprites (256x256, nose up). There is a sprite for each
+/// of twelve views down the plane's length, from straight behind it (a vertical dive, seen from above) over the
+/// top (level flight, spitfire.png) to straight in front of it (a vertical climb): the view is picked from the
+/// pitch, so a climbing or diving Spitfire is a drawing of one rather than a squashed level sprite. Every view
+/// shares one scale and one anchor (the plane's origin at Origin), so switching between them doesn't shift it.
+///
+/// The art has no propeller: it is drawn here. In level flight it is seen exactly edge-on from above, so the whole
+/// propeller is a line along the span. Each blade reaches its radius times the cosine of its angle round the hub, so as it turns its yellow tip
 /// slides out along the line and back in. A blade on the upper half of its turn faces the sky and is drawn lit and
-/// over the spinner; on the lower half it is in shadow and passes under the spinner. The propeller is turned at a
-/// rate the eye can follow rather than its real one, which would only alias into a bar that looks still.
+/// over the spinner; on the lower half it is in shadow and passes under the spinner. As the nose pitches toward or
+/// away from the camera the line opens into an ellipse (the disc seen at an angle, a circle when it is end-on).
+/// The propeller is turned at a rate the eye can follow rather than its real one, which would only alias into a
+/// bar that looks still.
 ///
 /// Firing: spitfire_firing.png is the peak of a shot. At load it is split from the plain sprite into the
 /// muzzle flames (pixels outside the airframe) and the light they throw on the wings (airframe pixels that
@@ -21,14 +28,23 @@ namespace Angels_Proj;
 public sealed class Spitfire
 {
     public const int Size = 256;
-    public static readonly Vector2 Origin = new(128f, 128f);
+    public static readonly Vector2 Origin = new(128f, 133f);   // the plane's origin in every view
 
     /// <summary>Screen px of sprite per unit of the old 96 px placeholder scale: wingspan 204 px -> 92 px.</summary>
     public const float ArtScale = 92f / 204f;
 
+    // The views, as the angle of the camera round the plane's length: 0 = straight behind (looking along the nose
+    // away from us), 90 = straight above, 180 = straight in front. Level flight (view 6) is spitfire.png.
+    private static readonly float[] ViewDeg = { 0f, 14f, 32f, 47f, 61f, 76f, 90f, 112f, 126f, 139f, 154f, 180f };
+    private const int LevelView = 6;
+    private const float ViewHysteresisDeg = 3f;           // a view is held until the next is this much closer
+    // Where the propeller hub is in each view (sprite px y; x is the centre line): the spinner, which sits about
+    // 9 px behind the nose tip in level flight and moves toward the plane's centre as the nose points away from or
+    // at the camera.
+    private static readonly float[] ViewHubY = { 131f, 115f, 84f, 67f, 57f, 59f, 57f, 65f, 72f, 83f, 100f, 133f };
+
     // Propeller (sprite px). Spitfire IX: four blades, 10 ft 9 in across on a 36 ft 10 in span.
     private const int Blades = 4;
-    private static readonly Vector2 Hub = new(127.5f, 57f);
     private const float SpinnerR = 5.5f, BladeR = 30f, BladeWidth = 2f, TipFrac = 0.12f;
     private static readonly Color BladeColor = new(12, 11, 10), BladeLit = new(46, 44, 41);
     private static readonly Color TipColor = new(232, 196, 58);   // RAF yellow tips
@@ -50,13 +66,16 @@ public sealed class Spitfire
         public float Length = 1f, Width = 1f;
     }
 
-    private readonly Texture2D _pixel, _body, _flames;
+    private readonly Texture2D _pixel, _flames;
+    private readonly Texture2D[] _views = new Texture2D[ViewDeg.Length];
+    private int _view = LevelView;
+    private Vector2 _hub = new(127.5f, 57f);              // where the hub is in the current view
     private readonly Texture2D[] _glow = new Texture2D[2];
     private readonly List<Flame> _flameList = new();
     private readonly float[] _flash = new float[2], _glowLevel = new float[2];
     private float _propAngle, _propRate;              // rad, rad per tick
 
-    public Texture2D Body => _body;
+    public Texture2D Body => _views[LevelView];
 
     public Spitfire(GraphicsDevice gd, Texture2D pixel)
     {
@@ -75,7 +94,8 @@ public sealed class Spitfire
             if (Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B) >= GlowThreshold)
                 glow[i % Size < Size / 2 ? 0 : 1][i] = b;
         }
-        _body = MakeTexture(gd, plain);
+        for (var i = 0; i < ViewDeg.Length; i++)
+            _views[i] = i == LevelView ? MakeTexture(gd, plain) : MakeTexture(gd, Load(gd, $"Content/Sprites/pitch/view_{i + 1:00}.png"));
         _flames = MakeTexture(gd, flames);
         _glow[0] = MakeTexture(gd, glow[0]);
         _glow[1] = MakeTexture(gd, glow[1]);
@@ -215,21 +235,41 @@ public sealed class Spitfire
         }
     }
 
-    /// <summary>Draws the plane at a screen position. scale is per sprite axis (x across the wings, y along the
-    /// fuselage).</summary>
-    public void Draw(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, Color tint)
+    /// <summary>Picks the view for a pitch (rad, + = nose up) and sets where the propeller hub is in it.</summary>
+    private void SelectView(float pitch)
     {
-        sb.Draw(_body, pos, null, tint, heading, Origin, scale, SpriteEffects.None, 0f);
-        for (var s = 0; s < 2; s++)
-            if (_glowLevel[s] > 0.01f)
-                sb.Draw(_glow[s], pos, null, Color.White * _glowLevel[s], heading, Origin, scale, SpriteEffects.None, 0f);
-        DrawPropeller(sb, pos, heading, scale);
-        DrawFlames(sb, pos, heading, scale);
+        var deg = MathHelper.Clamp(90f + MathHelper.ToDegrees(pitch), 0f, 180f);
+        var best = 0;
+        for (var i = 1; i < ViewDeg.Length; i++)
+            if (MathF.Abs(ViewDeg[i] - deg) < MathF.Abs(ViewDeg[best] - deg)) best = i;
+        if (best != _view && MathF.Abs(ViewDeg[_view] - deg) > MathF.Abs(ViewDeg[best] - deg) + ViewHysteresisDeg) _view = best;
+        _hub = new Vector2(127.5f, ViewHubY[_view]);
+    }
+
+    /// <summary>Draws the plane at a screen position. scale is per sprite axis (x across the wings, y along the
+    /// fuselage); pitch (rad, + = nose up) picks the view.</summary>
+    public void Draw(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, float pitch, Color tint)
+    {
+        SelectView(pitch);
+        // Seen from behind (diving) the propeller is on the far side of the airframe, so the airframe covers it.
+        var propBehind = ViewDeg[_view] < 80f;
+        var tilt = MathF.Abs(MathF.Sin(pitch));
+        if (propBehind) DrawPropeller(sb, pos, heading, scale, tilt);
+        sb.Draw(_views[_view], pos, null, tint, heading, Origin, scale, SpriteEffects.None, 0f);
+        if (_view == LevelView) // the muzzle flashes are drawn on the level view only
+            for (var s = 0; s < 2; s++)
+                if (_glowLevel[s] > 0.01f)
+                    sb.Draw(_glow[s], pos, null, Color.White * _glowLevel[s], heading, Origin, scale, SpriteEffects.None, 0f);
+        if (!propBehind) DrawPropeller(sb, pos, heading, scale, tilt);
+        if (_view == LevelView) DrawFlames(sb, pos, heading, scale);
     }
 
     /// <summary>Just the silhouette, for the shadow on the ground.</summary>
-    public void DrawShadow(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, Color color) =>
-        sb.Draw(_body, pos, null, color, heading, Origin, scale, SpriteEffects.None, 0f);
+    public void DrawShadow(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, float pitch, Color color)
+    {
+        SelectView(pitch);
+        sb.Draw(_views[_view], pos, null, color, heading, Origin, scale, SpriteEffects.None, 0f);
+    }
 
     private Vector2 ToScreen(Vector2 sprite, Vector2 pos, float heading, Vector2 scale)
     {
@@ -238,13 +278,13 @@ public sealed class Spitfire
         return pos + new Vector2(v.X * c - v.Y * s, v.X * s + v.Y * c);
     }
 
-    private void DrawPropeller(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale)
+    private void DrawPropeller(SpriteBatch sb, Vector2 pos, float heading, Vector2 scale, float tilt)
     {
         var width = BladeWidth * scale.Y;
         var blur = MathHelper.Clamp(_propRate / FullSpin, 0f, 1f) * BlurMax;
         if (blur > 0.01f)
             for (var side = -1; side <= 1; side += 2)
-                Segment(sb, pos, heading, scale, Hub + new Vector2(side * SpinnerR, 0f), Hub + new Vector2(side * BladeR, 0f), width,
+                Segment(sb, pos, heading, scale, _hub + new Vector2(side * SpinnerR, 0f), _hub + new Vector2(side * BladeR, 0f), width,
                     BlurColor * blur);
 
         // Each sample is the four blades at one instant within the frame's exposure, trailing back along the turn.
@@ -255,15 +295,18 @@ public sealed class Spitfire
             for (var b = 0; b < Blades; b++)
             {
                 var a = a0 + b * MathF.Tau / Blades;
-                float reach = MathF.Cos(a) * BladeR, up = MathF.Sin(a);
+                // The blade's tip, seen from above: along the span by cos, and along the plane by sin scaled by the tilt
+                // (0 edge-on, 1 end-on), so the tips trace a line that opens into an ellipse as the nose pitches.
+                float up = MathF.Sin(a);
+                var reach = new Vector2(MathF.Cos(a), up * tilt) * BladeR;
+                var length = reach.Length();
                 var start = up > 0f ? 0f : SpinnerR;
-                var length = MathF.Abs(reach);
                 if (length <= start) continue; // hidden under the spinner
-                var dir = new Vector2(MathF.Sign(reach), 0f);
+                var dir = reach / length;
                 var tipStart = MathF.Max(start, length * (1f - TipFrac));
                 var shade = Color.Lerp(BladeColor, BladeLit, (up + 1f) / 2f);
-                Segment(sb, pos, heading, scale, Hub + dir * start, Hub + dir * tipStart, width, shade * alpha);
-                Segment(sb, pos, heading, scale, Hub + dir * tipStart, Hub + dir * length, width, TipColor * alpha);
+                Segment(sb, pos, heading, scale, _hub + dir * start, _hub + dir * tipStart, width, shade * alpha);
+                Segment(sb, pos, heading, scale, _hub + dir * tipStart, _hub + dir * length, width, TipColor * alpha);
             }
         }
     }

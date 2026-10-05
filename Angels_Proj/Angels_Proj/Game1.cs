@@ -585,11 +585,11 @@ public class Game1 : Game
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
             var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
-            _spitfire.DrawShadow(_sb, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, _fm.Heading, new Vector2(ps * 0.9f),
+            _spitfire.DrawShadow(_sb, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, _fm.Heading, new Vector2(ps * 0.9f), _fm.Gamma,
                 new Color(0, 0, 0, 80) * vis);
             // Narrow the wingspan slightly when banked for a hint of tilt.
-            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), MathF.Max(MathF.Cos(_fm.Gamma), 0.3f)) * ps;
-            _spitfire.Draw(_sb, centre, _fm.Heading, squash, Color.White);
+            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps; // the pitch views are already foreshortened
+            _spitfire.Draw(_sb, centre, _fm.Heading, squash, _fm.Gamma, Color.White);
         }
         else
         {
