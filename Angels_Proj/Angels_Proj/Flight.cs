@@ -58,7 +58,8 @@ public sealed class FlightModel
     public float Speed;                            // true airspeed, ft/s
     public float Gamma;                            // flight path angle, rad (+ = climbing)
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
-    public float PitchStick;                       // spring-centred stick on top of the command, -1 (push) to +1 (pull)
+    public float PitchStick;                       // wheel stick on top of the command, -1 (push) to +1 (pull); stays where it is left
+    public float PitchTargetDeg => MathHelper.Clamp(PitchCmdDeg + PitchStick * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg);
     public float Throttle = 0.55f;
     private bool _pitchHeld;
     public float Bank, Heading;
@@ -123,6 +124,9 @@ public sealed class FlightModel
         Throttle = MathHelper.Clamp(Throttle + throttleKey * 0.012f, 0f, 1f);
         if (pitchKey != 0f)
         {
+            // The keys take over from the wheel: whatever the stick was asking for becomes the command.
+            PitchCmdDeg = PitchTargetDeg;
+            PitchStick = 0f;
             // While a key is held the command runs ahead of the nose.
             PitchCmdDeg = pitchKey > 0 ? MathF.Min(MaxClimbDeg, PitchCmdDeg + 3f) : MathF.Max(-MaxDiveDeg, PitchCmdDeg - 3f);
             _pitchHeld = true;
@@ -159,7 +163,7 @@ public sealed class FlightModel
         // High Mach stiffens the controls (compressibility); a low-energy wing can't pull at all.
         // The stick adds to the command and, the harder it is held, raises the rate the nose is asked to move at.
         var stick = MathHelper.Clamp(PitchStick, -1f, 1f);
-        var gammaTarget = MathHelper.ToRadians(MathHelper.Clamp(PitchCmdDeg + stick * StickAuthorityDeg, -MaxDiveDeg, MaxClimbDeg));
+        var gammaTarget = MathHelper.ToRadians(PitchTargetDeg);
         var authority = MathF.Abs(stick);
         var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * (3f + 4f * authority), -0.9f - 0.9f * authority, 0.9f + 0.9f * authority);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
