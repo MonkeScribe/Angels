@@ -24,12 +24,14 @@ public sealed class FlightModel
     public const float VneMph = 450f;              // never-exceed, indicated
     private const float WaveDragK = 3f;            // compressibility drag above Mach 0.75
     private const float OverspeedDragK = 0.3f;     // structural-limit drag above Vne
-    private const float MaxNPos = 4.0f;                    // pitch-axis g limit (either direction: a dive is a pull through the inverted side)
+    // Pitch-axis g limits. Level flight is 1 g, so 6 up and -4 down are the same 5 g of change either way: pulling
+    // and pushing the nose have equal authority.
+    private const float MaxNPos = 6.0f, MaxNNeg = 4.0f;
     private const float NTurnMax = 7f, NStruct = 12f;          // g at full bank at reference speed; structural limit
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
-    private const float StickAuthorityDeg = 70f;   // full stick asks for this much flight-path angle beyond the command
+    public const float StickAuthorityDeg = 60f;   // full stick, either way, asks for this much flight-path angle beyond the command
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
 
@@ -168,7 +170,7 @@ public sealed class FlightModel
         var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * (3f + 4f * authority), -0.9f - 0.9f * authority, 0.9f + 0.9f * authority);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
-        var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNPos, nWing), nAvail);
+        var n = MathHelper.Clamp(nReq, -MathF.Min(MaxNNeg, nWing), nAvail);
         Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
         Gamma = MathHelper.Clamp(Gamma, -MathHelper.PiOver2 * 0.995f, MathHelper.PiOver2 * 0.995f);
         LoadFactor = n + nTurn - 1f;

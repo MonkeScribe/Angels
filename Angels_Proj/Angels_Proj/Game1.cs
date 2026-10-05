@@ -30,11 +30,9 @@ public class Game1 : Game
     private const float SkidDecelFtS2 = 18f;                                  // belly friction
     private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
-    // The mouse wheel is a stick that stays where you leave it: each notch moves it, further the faster you are
-    // scrolling, and it holds until you scroll back, press W/S or middle-click.
-    private const float WheelKick = 0.15f;       // stick travel per notch (120 units) at a slow scroll
-    private const float WheelSpeedGain = 0.5f;   // extra travel per notch for each notch scrolled in the last ~10 ticks
-    private const float ScrollMemory = 0.9f;     // scroll speed left per tick
+    // The mouse wheel is a stick that stays where you leave it: each notch moves it one step the same way either
+    // direction, so scrolling fast is just more notches. It holds until you scroll back, press W/S or middle-click.
+    private const float WheelDegPerNotch = 6f;   // flight-path angle per notch (120 units); ten notches is full stick
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
     // Guns: wing-mounted, hit scan, converging ahead of the nose. One hit that gets through sets a plane alight.
@@ -81,7 +79,6 @@ public class Game1 : Game
     private FlightModel _fm = new();
     private Instruments _instruments;
     private int _lastWheel;
-    private float _scrollSpeed;                  // recent wheel speed, notches per ~10 ticks
     private bool _lastMiddle;
     private KeyboardState _kb, _prevKb;
     private bool _prevLeft;
@@ -439,13 +436,12 @@ public class Game1 : Game
         var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
         var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
 
-        // Mouse wheel: each notch moves the stick, by more the faster the wheel is turning, and it stays put.
+        // Mouse wheel: each notch moves the stick one step, and it stays put.
         // Middle click levels the nose again.
         var wheel = m.ScrollWheelValue;
         var notches = (wheel - _lastWheel) / 120f * (InvertWheel ? -1f : 1f);
         _lastWheel = wheel;
-        _scrollSpeed = _scrollSpeed * ScrollMemory + MathF.Abs(notches);
-        _fm.PitchStick = MathHelper.Clamp(_fm.PitchStick + notches * WheelKick * (1f + WheelSpeedGain * _scrollSpeed), -1f, 1f);
+        _fm.PitchStick = MathHelper.Clamp(_fm.PitchStick + notches * WheelDegPerNotch / FlightModel.StickAuthorityDeg, -1f, 1f);
         var middle = m.MiddleButton == ButtonState.Pressed;
         if (middle && !_lastMiddle) { _fm.PitchCmdDeg = 0f; _fm.PitchStick = 0f; }
         _lastMiddle = middle;
