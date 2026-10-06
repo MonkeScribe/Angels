@@ -83,6 +83,8 @@ public class Game1 : Game
     private Point _preAimMouse;                  // where the pointer was when mouse aim took it, to put it back after
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
+    private bool _showHitboxes;                 // debug menu: draw the planes' hit boxes on the map and in the sight
+    private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, float damage)> _boxEdges = new();
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
     private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
@@ -296,13 +298,14 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "SPAWN TARGETS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
         0 => _arcade ? "ARCADE" : "REALISM",
         1 => _cloudsOn ? "ON" : "OFF",
         2 => _hudBars ? "ON" : "OFF",
+        3 => _showHitboxes ? "ON" : "OFF",
         _ => "",
     };
 
@@ -316,7 +319,8 @@ public class Game1 : Game
                 break;
             case 1: _cloudsOn = !_cloudsOn; break;
             case 2: _hudBars = !_hudBars; break;
-            case 3:
+            case 3: _showHitboxes = !_showHitboxes; break;
+            case 4:
                 _traffic.SpawnAhead(_pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
@@ -394,6 +398,10 @@ public class Game1 : Game
         var hd = 0.5f * MathF.Sqrt(vp.Width * vp.Width + vp.Height * vp.Height);
         _traffic.Update(_pos, _fm.Altitude, f => hd * f / (Scale * GroundZoom), DistFactor);
         _fx.Update();
+        _boxEdges.Clear();
+        if (_showHitboxes) foreach (var p in _traffic.All) Traffic.HitBoxEdges(p, _boxEdges);
+        _gunsight.DebugLines.Clear();
+        foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.damage));
         _guns.Update(_traffic, _fx);
         _guns.Tracers(_tracers);
         _firing = false;
@@ -666,6 +674,19 @@ public class Game1 : Game
         {
             // Scorch mark where the plane went in.
             _sb.Draw(_pixel, new Rectangle((int)(centre.X - 40 * z), (int)(centre.Y - 28 * z), (int)(80 * z), (int)(56 * z)), new Color(20, 20, 20, 150));
+        }
+
+        // Hit boxes (debug menu): each box's edges, every end placed and scaled by its own height like everything
+        // else on the map. Colour shows the damage a round does there: red fuselage, yellow wings, orange tail.
+        foreach (var e in _boxEdges)
+        {
+            var col = e.damage >= 100f ? new Color(255, 60, 60) : e.damage >= 80f ? new Color(255, 150, 40) : new Color(255, 230, 70);
+            Vector2 P(Vector3 q) => centre + (new Vector2(q.X, q.Z) * World.PxPerFoot - _pos) * (s * GroundZoom / MathF.Max(DistFactor(q.Y), 0.2f));
+            var a = P(e.a); var b = P(e.b);
+            var dl = b - a; var len = dl.Length();
+            if (len < 0.5f) continue;
+            _sb.Draw(_pixel, (a + b) / 2f, null, col * 0.9f, MathF.Atan2(dl.Y, dl.X), new Vector2(0.5f, 0.5f),
+                new Vector2(len, MathF.Max(1f, 1.2f * s)), SpriteEffects.None, 0f);
         }
 
         // Particles (world space).

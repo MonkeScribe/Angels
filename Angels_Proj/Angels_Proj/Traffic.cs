@@ -205,6 +205,26 @@ public sealed class Traffic
         return hit != null;
     }
 
+    /// <summary>The twelve edges of every hit box of a plane, as pairs of world points (feet), with the damage the
+    /// box does so callers can colour them. For the debug hit box view.</summary>
+    public static void HitBoxEdges(Plane p, List<(Vector3 a, Vector3 b, float damage)> into)
+    {
+        World.Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
+        var centre = World.ToFt(p.Pos, p.Altitude);
+        foreach (var bx in Boxes)
+        {
+            var c = new Vector3[8];
+            for (var i = 0; i < 8; i++)
+            {
+                float x = (i & 1) == 0 ? bx.Min.X : bx.Max.X, y = (i & 2) == 0 ? bx.Min.Y : bx.Max.Y, z = (i & 4) == 0 ? bx.Min.Z : bx.Max.Z;
+                c[i] = centre + r * x + u * y + (-f) * z;   // local +z is backwards
+            }
+            for (var i = 0; i < 8; i++)
+                for (var bit = 1; bit <= 4; bit <<= 1)
+                    if ((i & bit) == 0) into.Add((c[i], c[i | bit], bx.Damage));
+        }
+    }
+
     private static bool Slab(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t)
     {
         float t0 = 0f, t1 = float.MaxValue;

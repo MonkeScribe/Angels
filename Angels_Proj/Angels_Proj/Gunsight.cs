@@ -51,6 +51,10 @@ public sealed class Gunsight
 
     public Texture2D Texture => _final;
 
+    /// <summary>Extra world-space lines (feet) to draw in the view, with the damage value that picks their colour. For the
+    /// debug hit box view; filled by the game each tick.</summary>
+    public readonly List<(Vector3 A, Vector3 B, float Damage)> DebugLines = new();
+
     /// <summary>Would something at this offset from the camera be inside the sight's field of view and range?</summary>
     public static bool Sees(Vector3 rel, Vector3 right, Vector3 up, Vector3 forward, float aspect, float range)
     {
@@ -464,6 +468,13 @@ public sealed class Gunsight
             list.Add(new VertexPositionColorTexture(d, col, new Vector2(1, 0)));
             list.Add(new VertexPositionColorTexture(a, col, new Vector2(0, 1))); list.Add(new VertexPositionColorTexture(d, col, new Vector2(1, 0)));
             list.Add(new VertexPositionColorTexture(e, col, new Vector2(0, 0)));
+        }
+
+        foreach (var dl in DebugLines)
+        {
+            var col = dl.Damage >= 100f ? Premul(new Vector3(1f, 0.25f, 0.25f), 1f)
+                : dl.Damage >= 80f ? Premul(new Vector3(1f, 0.6f, 0.15f), 1f) : Premul(new Vector3(1f, 0.9f, 0.3f), 1f);
+            _blendLines.Add(Vtx(dl.A - camPos, col)); _blendLines.Add(Vtx(dl.B - camPos, col));
         }
 
         var tracerCol = Premul(new Vector3(1f, 0.82f, 0.4f), 1f);
