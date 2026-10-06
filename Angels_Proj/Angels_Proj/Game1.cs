@@ -76,8 +76,8 @@ public class Game1 : Game
     private SpriteBatch _sb;
     private Texture2D _pixel, _grass, _tree;
     private Texture2D[] _houses, _clouds;
-    private SpriteSphere _sphere;      // the other aircraft: views of the late-war Spitfire from every angle
-    private SpriteSphere _playerSphere; // the player's: the early-war Spitfire
+    private SpriteSphere _sphere;      // views of the (early-war) Spitfire from every angle: every aircraft is drawn from it
+    private SpriteSphere _playerSphere; // the player's, the same sphere (the late-war one is still there: SpriteSphere.LoadLateWar)
     private readonly Fx _fx = new();
     private readonly Traffic _traffic;
     private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
@@ -157,8 +157,8 @@ public class Game1 : Game
         _sb = new SpriteBatch(GraphicsDevice);
         _pixel = Art.Pixel(GraphicsDevice);
         _instruments = new Instruments(GraphicsDevice, _pixel);
-        _sphere = SpriteSphere.LoadLateWar(GraphicsDevice);
-        _playerSphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
+        _sphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
+        _playerSphere = _sphere;
         _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere);
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
