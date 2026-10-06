@@ -29,25 +29,20 @@ public sealed class Gunsight
     };
 
     private static readonly Color GroundCol = new(88, 150, 70), GridCol = new(66, 122, 56), HorizonCol = new(205, 226, 240);
-    private static readonly Color Ink = new(24, 24, 30);
-    private static readonly Vector3 Light = Vector3.Normalize(new Vector3(0.35f, 0.85f, 0.4f));
-    private static readonly Color PlaneWing = new(236, 234, 224), PlaneGlass = new(112, 160, 200);
 
     private readonly GraphicsDevice _gd;
     private readonly SpriteBatch _sb;
     private readonly BasicEffect _fx, _fxTex;
     private readonly Texture2D[] _cloudTex;
-    private readonly List<VertexPositionColorTexture>[] _cloudQuads = { new(), new(), new() };
+    private readonly SpriteSphere _sphere;
+    // Camera-facing sprites (planes and clouds), as six vertices each, drawn far to near.
+    private readonly List<(float dist, Texture2D tex, int start)> _bills = new();
+    private readonly List<VertexPositionColorTexture> _billVerts = new();
     private readonly List<CloudField.Puff> _puffs = new();
     private RenderTarget2D _work, _final, _r2, _r4, _r8;
     private readonly Texture2D _ring, _prop, _disc, _vignette;
     private readonly List<VertexPositionColor> _tris = new(), _lines = new(), _blend = new(), _blendLines = new();
     private float _propAngle;
-
-    // Low-poly Spitfire-ish model in local feet: x right, y up, nose toward -z.
-    private enum Part { Body, Wing, Glass }
-    private readonly List<(Vector3 a, Vector3 b, Vector3 c, Part part)> _faces = new();
-    private readonly List<(Vector3 a, Vector3 b)> _edges = new();
 
     public Texture2D Texture => _final;
 
@@ -64,14 +59,14 @@ public sealed class Gunsight
         return MathF.Abs(Vector3.Dot(rel, right) / d) < tanH && MathF.Abs(Vector3.Dot(rel, up) / d) < tanH / aspect;
     }
 
-    public Gunsight(GraphicsDevice gd, SpriteBatch sb)
+    public Gunsight(GraphicsDevice gd, SpriteBatch sb, SpriteSphere sphere)
     {
         _gd = gd;
         _sb = sb;
+        _sphere = sphere;
         _fx = new BasicEffect(gd) { VertexColorEnabled = true, LightingEnabled = false, FogEnabled = false };
         _fxTex = new BasicEffect(gd) { VertexColorEnabled = true, TextureEnabled = true, LightingEnabled = false, FogEnabled = false };
         _cloudTex = new[] { Art.Cloud(gd, 11), Art.Cloud(gd, 23), Art.Cloud(gd, 37) };
-        BuildModel();
 
         _ring = Bake(gd, 256, 256, (x, y) =>
         {
@@ -135,72 +130,6 @@ public sealed class Gunsight
         return new Color(col.X * cover, col.Y * cover, col.Z * cover, cover);
     });
 
-    // ------------------------------------------------------------------ model
-
-    private void Tri(Vector3 a, Vector3 b, Vector3 c, Part part) => _faces.Add((a, b, c, part));
-
-    private void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Part part, bool outline = true)
-    {
-        Tri(a, b, c, part);
-        Tri(a, c, d, part);
-        if (!outline) return;
-        _edges.Add((a, b)); _edges.Add((b, c)); _edges.Add((c, d)); _edges.Add((d, a));
-    }
-
-    private void BuildModel()
-    {
-        // Fuselage: hexagonal rings from spinner to tail cone.
-        var rings = new (float z, float rx, float ry)[]
-        {
-            (-15.5f, .6f, .6f), (-13f, 1.9f, 2.1f), (-8f, 2.6f, 2.8f), (0f, 2.5f, 2.7f), (7f, 1.7f, 1.9f), (13f, .9f, 1.1f), (16.5f, .35f, .4f),
-        };
-        Vector3 V(int ring, int k)
-        {
-            var a = k * MathF.PI / 3f;
-            return new Vector3(rings[ring].rx * MathF.Cos(a), rings[ring].ry * MathF.Sin(a), rings[ring].z);
-        }
-        for (var i = 0; i < rings.Length - 1; i++)
-            for (var k = 0; k < 6; k++)
-            {
-                Quad(V(i, k), V(i, (k + 1) % 6), V(i + 1, (k + 1) % 6), V(i + 1, k), Part.Body, false);
-                _edges.Add((V(i, k), V(i, (k + 1) % 6)));  // ring edge
-                _edges.Add((V(i, k), V(i + 1, k)));        // longitudinal edge
-            }
-
-        // Wings (elliptical planform, slight dihedral) and tailplane, both sides, in cream. The wings have
-        // thickness, so they still read as solid seen from behind and level.
-        foreach (var s in new[] { -1f, 1f })
-        {
-            Vector3 P(float x, float y, float z) => new(s * x, y, z);
-            Vector3 D(Vector3 v, float t) => new(v.X, v.Y - t, v.Z);
-            Vector3 rLe = P(2.3f, -0.6f, -4f), rTe = P(2.3f, -0.6f, 4.5f), mLe = P(10.5f, 0f, -2.2f), mTe = P(10.5f, 0f, 3.4f),
-                    tLe = P(18.4f, 0.5f, -0.8f), tTe = P(18.4f, 0.5f, 1.4f);
-            const float tr = 1.5f, tm = 1.0f, tt = 0.5f; // thickness at root, mid, tip
-            Quad(rLe, mLe, mTe, rTe, Part.Wing);                                   // upper skin
-            Quad(mLe, tLe, tTe, mTe, Part.Wing);
-            Quad(D(rLe, tr), D(mLe, tm), D(mTe, tm), D(rTe, tr), Part.Wing, false); // lower skin
-            Quad(D(mLe, tm), D(tLe, tt), D(tTe, tt), D(mTe, tm), Part.Wing, false);
-            Quad(rTe, mTe, D(mTe, tm), D(rTe, tr), Part.Wing, false);              // trailing edge
-            Quad(mTe, tTe, D(tTe, tt), D(mTe, tm), Part.Wing, false);
-            Quad(rLe, mLe, D(mLe, tm), D(rLe, tr), Part.Wing, false);              // leading edge
-            Quad(mLe, tLe, D(tLe, tt), D(mLe, tm), Part.Wing, false);
-            Quad(tLe, tTe, D(tTe, tt), D(tLe, tt), Part.Wing, false);              // wing tip
-            Quad(P(0.8f, 0.3f, 13f), P(5.2f, 0.5f, 14.2f), P(5.2f, 0.5f, 16f), P(0.8f, 0.3f, 16.2f), Part.Wing);
-            Quad(P(0.8f, 0.3f, 16.2f), P(5.2f, 0.5f, 16f), P(5.2f, 0.0f, 16f), P(0.8f, -0.2f, 16.2f), Part.Wing, false);
-        }
-        // Fin in the body colour.
-        Tri(new Vector3(0, 1.5f, 10.5f), new Vector3(0, 6.8f, 15.2f), new Vector3(0, 6.6f, 16.4f), Part.Body);
-        Tri(new Vector3(0, 1.5f, 10.5f), new Vector3(0, 6.6f, 16.4f), new Vector3(0, 1.5f, 16.6f), Part.Body);
-        _edges.Add((new Vector3(0, 1.5f, 10.5f), new Vector3(0, 6.8f, 15.2f)));
-        _edges.Add((new Vector3(0, 6.8f, 15.2f), new Vector3(0, 6.6f, 16.4f)));
-        _edges.Add((new Vector3(0, 6.6f, 16.4f), new Vector3(0, 1.5f, 16.6f)));
-        // Canopy.
-        Tri(new Vector3(-1.1f, 2.6f, -6f), new Vector3(1.1f, 2.6f, -6f), new Vector3(0f, 4.2f, -3.5f), Part.Glass);
-        Tri(new Vector3(-1.1f, 2.6f, -1f), new Vector3(1.1f, 2.6f, -1f), new Vector3(0f, 4.2f, -3.5f), Part.Glass);
-        Tri(new Vector3(-1.1f, 2.6f, -6f), new Vector3(-1.1f, 2.6f, -1f), new Vector3(0f, 4.2f, -3.5f), Part.Glass);
-        Tri(new Vector3(1.1f, 2.6f, -6f), new Vector3(1.1f, 2.6f, -1f), new Vector3(0f, 4.2f, -3.5f), Part.Glass);
-    }
-
     // ------------------------------------------------------------------ rendering
 
     private static RenderTarget2D Target(GraphicsDevice gd, int w, int h, bool msaa) =>
@@ -223,8 +152,6 @@ public sealed class Gunsight
 
     private static Color Premul(Vector3 rgb, float a) => new(rgb.X * a, rgb.Y * a, rgb.Z * a, a);
 
-    private static Color Shade(Color c, float k) => new((int)(c.R * k), (int)(c.G * k), (int)(c.B * k), 255);
-
     public void Render(int width, int height, Vector3 camPos, float heading, float pitch, float bank,
         IReadOnlyList<Traffic.Plane> planes, Fx fx, List<Tracer> tracers, float throttle)
     {
@@ -240,8 +167,7 @@ public sealed class Gunsight
         _fxTex.World = Matrix.Identity;
         _fxTex.View = _fx.View;
         BuildGeometry(camPos, alt, fwd, planes, fx, tracers);
-        var cloudQuads = new VertexPositionColorTexture[3][];
-        for (var i = 0; i < 3; i++) cloudQuads[i] = _cloudQuads[i].ToArray();
+        var batches = Batches();
         var tris = _tris.ToArray(); var lines = _lines.ToArray();
         var blend = _blend.ToArray(); var blendLines = _blendLines.ToArray();
 
@@ -267,13 +193,12 @@ public sealed class Gunsight
             Draw(blend, PrimitiveType.TriangleList, 3);
             Draw(blendLines, PrimitiveType.LineList, 2);
             _fxTex.Projection = _fx.Projection;
-            for (var i = 0; i < 3; i++)
+            foreach (var (tex, verts) in batches)
             {
-                if (cloudQuads[i].Length < 3) continue;
-                _fxTex.Texture = _cloudTex[i];
+                _fxTex.Texture = tex;
                 _fxTex.CurrentTechnique.Passes[0].Apply();
                 _gd.SamplerStates[0] = SamplerState.LinearClamp;
-                _gd.DrawUserPrimitives(PrimitiveType.TriangleList, cloudQuads[i], 0, cloudQuads[i].Length / 3);
+                _gd.DrawUserPrimitives(PrimitiveType.TriangleList, verts, 0, verts.Length / 3);
             }
 
             var src = Soften(_work, blur);
@@ -305,6 +230,43 @@ public sealed class Gunsight
         _gd.BlendState = BlendState.Opaque;
     }
 
+    /// <summary>The camera-facing sprites sorted far to near and grouped into runs that share a texture, so they draw
+    /// in the right order over each other with as few switches as possible.</summary>
+    private List<(Texture2D tex, VertexPositionColorTexture[] verts)> Batches()
+    {
+        _bills.Sort((a, b) => b.dist.CompareTo(a.dist));
+        var batches = new List<(Texture2D, VertexPositionColorTexture[])>();
+        var run = new List<VertexPositionColorTexture>();
+        Texture2D runTex = null;
+        foreach (var (_, tex, start) in _bills)
+        {
+            if (tex != runTex && run.Count > 0) { batches.Add((runTex, run.ToArray())); run.Clear(); }
+            runTex = tex;
+            for (var i = 0; i < 6; i++) run.Add(_billVerts[start + i]);
+        }
+        if (run.Count > 0) batches.Add((runTex, run.ToArray()));
+        return batches;
+    }
+
+    /// <summary>Adds a camera-facing sprite: the part of the texture in uv (left, top, right, bottom) on a quad of the given
+    /// half size about centre, turned clockwise by roll (as seen) and flipped if asked.</summary>
+    private void AddBillboard(Texture2D tex, float dist, Vector3 centre, Vector3 rightV, Vector3 upV, float halfW, float halfH,
+        float roll, bool flip, Vector4 uv, Color col)
+    {
+        float cr = MathF.Cos(roll), sr = MathF.Sin(roll);
+        float u0 = flip ? uv.Z : uv.X, u1 = flip ? uv.X : uv.Z;
+        // Corners as (x, y) with y up, turned clockwise: x' = x cos + y sin, y' = -x sin + y cos.
+        VertexPositionColorTexture V(float x, float y, float u, float v)
+        {
+            float px = (x * cr + y * sr) * halfW, py = (-x * sr + y * cr) * halfH;
+            return new VertexPositionColorTexture(centre + rightV * px + upV * py, col, new Vector2(u, v));
+        }
+        var a = V(-1, -1, u0, uv.W); var b = V(1, -1, u1, uv.W); var d = V(1, 1, u1, uv.Y); var e = V(-1, 1, u0, uv.Y);
+        _bills.Add((dist, tex, _billVerts.Count));
+        _billVerts.Add(a); _billVerts.Add(b); _billVerts.Add(d);
+        _billVerts.Add(a); _billVerts.Add(d); _billVerts.Add(e);
+    }
+
     /// <summary>Blurs a slab by repeatedly halving it with bilinear filtering; level 0 is left sharp.</summary>
     private Texture2D Soften(RenderTarget2D src, int level)
     {
@@ -325,7 +287,7 @@ public sealed class Gunsight
 
     private void BuildGeometry(Vector3 camPos, float alt, Vector3 fwd, IReadOnlyList<Traffic.Plane> planes, Fx fx, List<Tracer> tracers)
     {
-        _tris.Clear(); _lines.Clear(); _blend.Clear(); _blendLines.Clear();
+        _tris.Clear(); _lines.Clear(); _blend.Clear(); _blendLines.Clear(); _bills.Clear(); _billVerts.Clear();
 
         // Sky: a big dome around the camera, graded from pale at the horizon to deep blue overhead, and carried
         // on below the horizon too: past the view box (or above the ground) there is only sky, in every direction.
@@ -391,44 +353,33 @@ public sealed class Gunsight
             for (var gz = MathF.Floor((camPos.Z - rg) / spacing) * spacing; gz <= camPos.Z + rg; gz += spacing) GridLine(gz - camPos.Z, false);
         }
 
-        // Planes, in their own colours.
+        // The view's own axes in the world, which the camera-facing sprites (planes, smoke, clouds) are laid out along.
+        var inv = Matrix.Invert(_fx.View) with { Translation = Vector3.Zero };
+        var rightV = Vector3.Normalize(Vector3.Transform(Vector3.UnitX, inv));
+        var upV = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, inv));
+
+        // Planes: each is the view of the sprite sphere that looks at it from where we are, laid flat to the view and
+        // turned so its wings and fin lie right. It fades into the sky toward the edge of the box.
+        var sheetW = (float)_sphere.Sheet.Width; var sheetH = (float)_sphere.Sheet.Height;
         foreach (var p in planes)
         {
             var pos = World.ToFt(p.Pos, p.Altitude) - camPos;
             var dist2 = pos.LengthSquared();
-            if (dist2 > Box * Box || Vector3.Dot(pos, fwd) < -60f) continue;
+            var depth = Vector3.Dot(pos, fwd);
+            if (dist2 > Box * Box || depth < 10f) continue;
             var hazeK = World.Smooth(2200f, Box, MathF.Sqrt(dist2)); // fades to sky colour at the edge of the box
             World.Basis(p.Heading, p.Pitch, p.Bank, out var pr, out var pu, out var pf);
-            Vector3 T(Vector3 l) => pos + pr * l.X + pu * l.Y - pf * l.Z; // local forward is -z
+            var view = _sphere.Pick(-pos / MathF.Sqrt(dist2), upV, pf, pr, pu);
             var burn = p.State == Traffic.State.Burning ? 0.45f : 1f;
-            var bodyCol = Traffic.Colors[p.Color];
-
-            foreach (var (fa, fb, fc, part) in _faces)
-            {
-                Vector3 a = T(fa), b = T(fb), c = T(fc);
-                var n = Vector3.Cross(b - a, c - a);
-                var len = n.Length();
-                var lit = len > 1e-4f ? MathF.Abs(Vector3.Dot(n / len, Light)) : 0.5f;
-                var baseCol = part switch { Part.Body => bodyCol, Part.Wing => PlaneWing, _ => PlaneGlass };
-                var col = Color.Lerp(Shade(baseCol, (0.55f + 0.45f * lit) * burn), HorizonCol, hazeK);
-                _tris.Add(Vtx(a, col)); _tris.Add(Vtx(b, col)); _tris.Add(Vtx(c, col));
-            }
-            // Dark outline, nudged toward the camera so it wins the depth test against the faces.
-            // Only up close; at distance the 1px lines would swamp the plane's colours.
-            var pull = 0.3f + 0.0008f * MathF.Sqrt(dist2);
-            if (dist2 < 450f * 450f)
-              foreach (var (ea, eb) in _edges)
-              {
-                Vector3 a = T(ea), b = T(eb);
-                a -= Vector3.Normalize(a) * pull; b -= Vector3.Normalize(b) * pull;
-                _lines.Add(Vtx(a, Ink)); _lines.Add(Vtx(b, Ink));
-              }
+            var a = 1f - hazeK;
+            var half = SpriteSphere.FrameFt / 2f;
+            // Half a texel in from the frame's edge, so neighbouring frames don't bleed in.
+            var uv = new Vector4((view.Src.X + 0.5f) / sheetW, (view.Src.Y + 0.5f) / sheetH,
+                (view.Src.Right - 0.5f) / sheetW, (view.Src.Bottom - 0.5f) / sheetH);
+            AddBillboard(_sphere.Sheet, MathF.Sqrt(dist2), pos, rightV, upV, half, half, view.Roll, view.Flip, uv, new Color(burn * a, burn * a, burn * a, a));
         }
 
         // Smoke, fire and sparks as camera-facing quads, drawn after the solids.
-        var inv = Matrix.Invert(_fx.View) with { Translation = Vector3.Zero };
-        var rightV = Vector3.Normalize(Vector3.Transform(Vector3.UnitX, inv));
-        var upV = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, inv));
         foreach (var p in fx.Particles)
         {
             var c = p.Pos - camPos;
@@ -446,7 +397,6 @@ public sealed class Gunsight
             _blend.Add(Vtx(a, col)); _blend.Add(Vtx(d, col)); _blend.Add(Vtx(e, col));
         }
         // Clouds: camera-facing billboards from the same field the map uses, only those inside the view box.
-        foreach (var q in _cloudQuads) q.Clear();
         var camPx = new Vector2(camPos.X, camPos.Z) * World.PxPerFoot;
         CloudField.Query(camPx, Box * World.PxPerFoot, camPos.Y, Box, _puffs);
         _puffs.Sort((a, b) => (World.ToFt(b.Pos, b.Height) - camPos).LengthSquared().CompareTo((World.ToFt(a.Pos, a.Height) - camPos).LengthSquared()));
@@ -460,14 +410,8 @@ public sealed class Gunsight
             if (alpha <= 0.01f) continue;
             var halfW = 256f * pf.Size / World.PxPerFoot / 2f; // sprite world px -> feet
             var halfH = halfW * 160f / 256f;
-            Vector3 dx = rightV * halfW, dy = upV * halfH;
-            var col = new Color(alpha, alpha, alpha, alpha); // premultiplied white
-            Vector3 a = c - dx - dy, b = c + dx - dy, d = c + dx + dy, e = c - dx + dy;
-            var list = _cloudQuads[pf.Variant];
-            list.Add(new VertexPositionColorTexture(a, col, new Vector2(0, 1))); list.Add(new VertexPositionColorTexture(b, col, new Vector2(1, 1)));
-            list.Add(new VertexPositionColorTexture(d, col, new Vector2(1, 0)));
-            list.Add(new VertexPositionColorTexture(a, col, new Vector2(0, 1))); list.Add(new VertexPositionColorTexture(d, col, new Vector2(1, 0)));
-            list.Add(new VertexPositionColorTexture(e, col, new Vector2(0, 0)));
+            AddBillboard(_cloudTex[pf.Variant], dist, c, rightV, upV, halfW, halfH, 0f, false, new Vector4(0f, 0f, 1f, 1f),
+                new Color(alpha, alpha, alpha, alpha)); // premultiplied white
         }
 
         foreach (var dl in DebugLines)

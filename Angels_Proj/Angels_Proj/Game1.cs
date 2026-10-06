@@ -76,7 +76,7 @@ public class Game1 : Game
     private SpriteBatch _sb;
     private Texture2D _pixel, _grass, _tree;
     private Texture2D[] _houses, _clouds;
-    private Texture2D[] _aiPlanes; // level sprite per formation colour
+    private SpriteSphere _sphere;      // the other aircraft: views of the plane from every angle
     private readonly Fx _fx = new();
     private readonly Traffic _traffic;
     private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
@@ -155,15 +155,14 @@ public class Game1 : Game
         _sb = new SpriteBatch(GraphicsDevice);
         _pixel = Art.Pixel(GraphicsDevice);
         _instruments = new Instruments(GraphicsDevice, _pixel);
-        _gunsight = new Gunsight(GraphicsDevice, _sb);
+        _sphere = new SpriteSphere(GraphicsDevice);
+        _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere);
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
         _w2 = new RenderTarget2D(GraphicsDevice, vp0.Width / 2, vp0.Height / 2);
         _w4 = new RenderTarget2D(GraphicsDevice, vp0.Width / 4, vp0.Height / 4);
         _w8 = new RenderTarget2D(GraphicsDevice, vp0.Width / 8, vp0.Height / 8);
         _grass = Art.Grass(GraphicsDevice);
-        _aiPlanes = new Texture2D[Traffic.Colors.Length];
-        for (var i = 0; i < _aiPlanes.Length; i++) _aiPlanes[i] = Art.Plane(GraphicsDevice, 0f, Traffic.Colors[i]);
         _spitfire = new Spitfire(GraphicsDevice, _pixel);
         _tree = Art.Tree(GraphicsDevice);
         _clouds = new[] { Art.Cloud(GraphicsDevice, 11), Art.Cloud(GraphicsDevice, 23), Art.Cloud(GraphicsDevice, 37) };
@@ -1140,12 +1139,15 @@ public class Game1 : Game
         var zGround = Zoom;
         // Same on-screen size as the player at the same altitude; nearer or further planes scale by perspective.
         var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
-        var origin = new Vector2(48, 48);
+        var origin = new Vector2(SpriteSphere.Frame / 2f);
         foreach (var c in _craft)
         {
-            var tex = _aiPlanes[c.Color];
             var f = DistFactor(c.Altitude);
-            var squash = new Vector2(MathF.Cos(c.Bank * 0.6f), MathF.Max(0.5f, MathF.Cos(c.Pitch)));
+            // The map looks straight down with north at the top, so the plane's view is picked for that: its heading,
+            // pitch and bank all come out of which picture of the sphere it is and how it is turned.
+            World.Basis(c.Heading, c.Pitch, c.Bank, out var pr, out var pu, out var pf);
+            var view = _sphere.Pick(Vector3.UnitY, -Vector3.UnitZ, pf, pr, pu);
+            var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
             var tint = c.State == Traffic.State.Burning ? new Color(95, 90, 90) : Color.White;
             if (pass == TrafficPass.Shadows)
             {
@@ -1154,7 +1156,7 @@ public class Game1 : Game
                 var sp = centre + (c.Pos + new Vector2(4f, 6f) * (c.Altitude / 1000f) - _pos) * zGround;
                 var ss = worldScale * zGround;
                 if (ss * 96f < 3f) continue;
-                _sb.Draw(tex, sp, null, new Color(0, 0, 0, 70), c.Heading, origin, squash * ss * 0.9f, SpriteEffects.None, 0f);
+                _sb.Draw(_sphere.Sheet, sp, view.Src, new Color(0, 0, 0, 70), view.Roll, origin, ss * 0.9f * SpriteSphere.MapScale, flip, 0f);
                 continue;
             }
             var above = c.Altitude > _fm.Altitude;
@@ -1164,7 +1166,7 @@ public class Game1 : Game
             if (scale * 96f < 3f) continue;
             var screen = centre + (c.Pos - _pos) * z;
             var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
-            _sb.Draw(tex, screen, null, tint * alpha, c.Heading, origin, squash * scale, SpriteEffects.None, 0f);
+            _sb.Draw(_sphere.Sheet, screen, view.Src, tint * alpha, view.Roll, origin, scale * SpriteSphere.MapScale, flip, 0f);
         }
         if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
     }
