@@ -31,6 +31,10 @@ public sealed class Guns
     /// fired, fly, drop and hit exactly the same; they just can't be seen.</summary>
     public const bool ShowEffects = false;
 
+    /// <summary>Whether tracers are drawn in the gunsight's 3D view. Independent of ShowEffects, which covers the map's
+    /// tracers, the muzzle flashes and the hit sparks.</summary>
+    public const bool ShowSightTracers = true;
+
     /// <summary>Gun muzzles in the aircraft frame (feet): x along the right wing, y up, z forward. Four per wing,
     /// spread outboard of the propeller arc, a little below the wing chord line and ahead of the leading edge.</summary>
     public static readonly Vector3[] Muzzles =
@@ -47,7 +51,7 @@ public sealed class Guns
     private const float DragK = 0.00024f;
     private const float LifeS = 1.6f;                     // rounds are dropped after this (well past 1000 yd)
     private const float SpreadRad = 0.0035f;              // each gun's dispersion either way, about 3.5 mils
-    private const float TracerStreakS = 0.035f;           // how much of its flight a tracer's glow streak covers
+    private const float TracerStreakS = 0.05f;            // how much of its flight a tracer's glow streak covers
 
     /// <summary>Per-round damage scale, against the hit boxes' values, until damage uses calibre and mass. The boxes
     /// were tuned for one round in twelve a second; eight guns fire about 150.</summary>
@@ -150,7 +154,7 @@ public sealed class Guns
     public void Tracers(List<Gunsight.Tracer> into)
     {
         into.Clear();
-        if (!ShowEffects) return;
+        if (!ShowEffects && !ShowSightTracers) return;
         foreach (var r in Rounds)
             if (r.Tracer)
                 into.Add(new Gunsight.Tracer { A = r.Pos - r.Vel * TracerStreakS, B = r.Pos, Life = 1 });

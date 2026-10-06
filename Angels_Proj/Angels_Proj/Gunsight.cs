@@ -477,10 +477,24 @@ public sealed class Gunsight
             _blendLines.Add(Vtx(dl.A - camPos, col)); _blendLines.Add(Vtx(dl.B - camPos, col));
         }
 
-        var tracerCol = Premul(new Vector3(1f, 0.82f, 0.4f), 1f);
+        // Tracers: each a glowing streak, a ribbon turned to face the camera so it reads at any range. A soft orange
+        // halo under a thin hot core. The width is in feet, so a round close by is fat and a far one a fine line.
+        var haze = Premul(new Vector3(1f, 0.55f, 0.18f), 0.4f);
+        var core = Premul(new Vector3(1f, 0.93f, 0.62f), 1f);
         foreach (var tr in tracers)
         {
-            _blendLines.Add(Vtx(tr.A - camPos, tracerCol)); _blendLines.Add(Vtx(tr.B - camPos, tracerCol));
+            Vector3 a = tr.A - camPos, b = tr.B - camPos, dir = b - a, mid = (a + b) * 0.5f;
+            var side = Vector3.Cross(dir, mid);
+            if (side.LengthSquared() < 1e-6f) continue; // coming straight at the camera: nothing to show
+            side.Normalize();
+            void Ribbon(float half, Color c)
+            {
+                Vector3 p0 = a - side * half, p1 = a + side * half, p2 = b + side * half, p3 = b - side * half;
+                _blend.Add(Vtx(p0, c)); _blend.Add(Vtx(p1, c)); _blend.Add(Vtx(p2, c));
+                _blend.Add(Vtx(p0, c)); _blend.Add(Vtx(p2, c)); _blend.Add(Vtx(p3, c));
+            }
+            Ribbon(1.3f, haze);
+            Ribbon(0.45f, core);
         }
     }
 

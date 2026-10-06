@@ -788,6 +788,7 @@ public class Game1 : Game
         }
 
         // Tracers on the map: short glowing streaks, placed and scaled by their height like everything else.
+        if (Guns.ShowEffects)
         foreach (var tr in _tracers)
         {
             var zt = Scale * GroundZoom / MathF.Max(DistFactor(tr.B.Y), 0.2f);
