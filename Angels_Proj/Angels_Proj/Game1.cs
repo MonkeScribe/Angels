@@ -258,7 +258,7 @@ public class Game1 : Game
             var f = DistFactor(p.Altitude);
             if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt || p.State != Traffic.State.Flying) continue;
             if (needSight && !Gunsight.Sees(World.ToFt(p.Pos, p.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)) continue;
-            // The plane is under the mouse when the mouse is inside any part of its drawn shape (wings, fuselage, tail).
+            // The plane is under the mouse when the mouse is inside its targeting box.
             zones.Clear();
             SpriteZones(p, centre, zones, HoverPadPx);
             var hit = false;
@@ -270,18 +270,14 @@ public class Game1 : Game
         return best;
     }
 
-    // The parts of a traffic plane's sprite (96 px, nose up, centred on 48,48): x0, y0, x1, y1 in sprite px and the damage
-    // a round does there. Matches Art.PlaneColor: the tapered fuselage, the main wings, the tailplane.
-    private static readonly (float x0, float y0, float x1, float y1, float damage)[] ZoneRects =
-    {
-        (-7f, -38f, 7f, 40f, 100f),    // fuselage and engine
-        (-46f, -14f, 46f, 2f, 60f),    // wings
-        (-18f, 28f, 18f, 38f, 80f),    // tailplane
-    };
-    private const float HoverPadPx = 5f;             // sprite px of slack round each part, so the plane is easy to hover
+    // The targeting box of a traffic plane: one box over the whole sprite (96 px, nose up, centred on 48,48), from
+    // wingtip to wingtip and nose to tail, in sprite px. Hovering it tells the plane to turn and pitch at the target.
+    // This is separate from the hit boxes that rounds are tested against (see Traffic.Boxes and the HITBOXES view).
+    private const float BoxX0 = -46f, BoxY0 = -42f, BoxX1 = 46f, BoxY1 = 40f;
+    private const float HoverPadPx = 4f;             // sprite px of slack round the box, so the plane is easy to hover
 
-    /// <summary>The on-screen shape of each part of a traffic plane, as the sprite is drawn: scaled by its distance and
-    /// squashed by its bank and pitch, then turned to its heading. pad grows each part outward, in sprite px.</summary>
+    /// <summary>The on-screen targeting box of a traffic plane, as the sprite is drawn: scaled by its distance and
+    /// squashed by its bank and pitch, then turned to its heading. pad grows it outward, in sprite px.</summary>
     private void SpriteZones(Traffic.Plane p, Vector2 centre, System.Collections.Generic.List<(Vector2[] poly, float damage)> into, float pad = 0f)
     {
         var s = Scale;
@@ -296,8 +292,7 @@ public class Game1 : Game
             var v = new Vector2(x * squash.X, y * squash.Y) * scale;
             return screen + new Vector2(v.X * c - v.Y * sn, v.X * sn + v.Y * c);
         }
-        foreach (var r in ZoneRects)
-            into.Add((new[] { T(r.x0 - pad, r.y0 - pad), T(r.x1 + pad, r.y0 - pad), T(r.x1 + pad, r.y1 + pad), T(r.x0 - pad, r.y1 + pad) }, r.damage));
+        into.Add((new[] { T(BoxX0 - pad, BoxY0 - pad), T(BoxX1 + pad, BoxY0 - pad), T(BoxX1 + pad, BoxY1 + pad), T(BoxX0 - pad, BoxY1 + pad) }, 0f));
     }
 
     private static bool InsideConvex(Vector2[] poly, Vector2 q)
@@ -741,12 +736,11 @@ public class Game1 : Game
                 new Vector2(len, MathF.Max(1f, 1.2f * s)), SpriteEffects.None, 0f);
         }
 
-        // The plane under the mouse: its hit areas as drawn on the map, matching the sprite's wings, fuselage and
-        // tail, filled translucent with an outline and coloured by the damage a round does there. The mouse is over
-        // the plane when it is inside these (plus a little slack).
+        // The plane under the mouse: its targeting box (one box over the whole sprite), green, filled translucent
+        // with an outline. The mouse is over the plane when it is inside this (plus a little slack).
         foreach (var (poly, damage) in _hoverZones)
         {
-            var col = damage >= 100f ? new Color(255, 60, 60) : damage >= 80f ? new Color(255, 150, 40) : new Color(255, 230, 70);
+            var col = new Color(80, 235, 110);
             float minY = float.MaxValue, maxY = float.MinValue;
             foreach (var hp in poly) { minY = MathF.Min(minY, hp.Y); maxY = MathF.Max(maxY, hp.Y); }
             for (var y = MathF.Floor(minY); y <= MathF.Ceiling(maxY); y += 1f)
