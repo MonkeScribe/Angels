@@ -30,6 +30,7 @@ public sealed class FlightModel
     private const float NTurnMax = 7f, NStruct = 12f;          // g at full bank at reference speed; structural limit
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
+    private const float StallNoseDropDegS = 75f;   // how fast a fully stalled nose falls toward the ground
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
     private const float WheelSlewDeg = 5f;         // the wheel swings the nose this fast at most (deg per tick), ignoring the g limit
     private const float WheelEase = 0.15f;         // fraction of the gap to the command the nose closes each tick: it eases in and settles
@@ -226,6 +227,9 @@ public sealed class FlightModel
         // Pitch stick commands a flight-path angle; the wing's load factor decides how fast we get there.
         // High Mach stiffens the controls (compressibility); a low-energy wing can't pull at all.
         var gammaTarget = MathHelper.ToRadians(PitchCmdDeg);
+        // Out of airspeed the wing and tail stop flying the nose: it drops through the horizon under its own weight
+        // (a vertical climb that runs out of speed falls over rather than hanging there). 0 at stall speed, 1 at a standstill.
+        var stallFrac = MathHelper.Clamp(1f - Speed / StallSpeed(1f), 0f, 1f);
         var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * 3f, -0.9f, 0.9f);
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
@@ -237,10 +241,14 @@ public sealed class FlightModel
             var gap = gammaTarget - Gamma;
             var slew = MathHelper.ToRadians(_pointSwing ? PointSlewDeg : WheelSlewDeg);
             var ease = _pointSwing ? PointEase : WheelEase;
-            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap : MathHelper.Clamp(gap * ease, -slew, slew);
+            // Below stall speed the elevator loses its bite, so the wheel can't hold the nose up.
+            var bite = 1f - stallFrac;
+            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap * bite : MathHelper.Clamp(gap * ease, -slew, slew) * bite;
             if (MathF.Abs(gammaTarget - Gamma) > MathHelper.ToRadians(1f)) n = gammaTarget > Gamma ? nAvail : -MathF.Min(MaxNNeg, nWing);
         }
         else Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
+        if (stallFrac > 0f && Gamma > -MathHelper.PiOver2 * 0.9f)
+            Gamma -= MathHelper.ToRadians(StallNoseDropDegS) * stallFrac * Dt;
         Gamma = MathHelper.Clamp(Gamma, -MathHelper.PiOver2 * 0.995f, MathHelper.PiOver2 * 0.995f);
         LoadFactor = n + nTurn - 1f;
 
