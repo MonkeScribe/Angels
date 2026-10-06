@@ -16,6 +16,12 @@ public enum PartState { Undamaged, Slight, Moderate, Critical, Black, Gone }
 /// calibre and its speed at impact -> subtract the part's armour -> whatever is left over (if anything) comes off
 /// the part's hit points. So a fast, heavy round gets through armour and does a lot; a slow or light one may do
 /// nothing to an armoured part and still hurt a bare one (the canopy has no armour at all).
+///
+/// Integrity: how much of a part a weapon can actually destroy. Each part has an Integrity and each weapon a
+/// Destructive rating (both 0-100). A weapon does full damage down to a floor of MaxHp x (Integrity - Destructive)%;
+/// below that floor its damage drops off sharply and keeps shrinking as the part's hit points fall. So rifle-calibre
+/// machine guns shred an engine or a canopy (low integrity, no floor) but only knock a fuselage or wing down about 75%
+/// before they start to tell less and less; cannon (high Destructive) have no floor and finish the job.
 /// </summary>
 public static class DamageTuning
 {
@@ -29,13 +35,14 @@ public static class DamageTuning
         public float CaliberIn;
         public float Power;
         public float RefSpeedFtS;
+        public float Destructive;   // 0-100: set against each part's Integrity (see the class notes)
     }
 
-    public static readonly Weapon Browning303 = new() { Name = ".303 BROWNING", CaliberIn = 0.303f, Power = 10f, RefSpeedFtS = 2440f };
+    public static readonly Weapon Browning303 = new() { Name = ".303 BROWNING", CaliberIn = 0.303f, Power = 10f, RefSpeedFtS = 2440f, Destructive = 30f };
     // For later aircraft.
-    public static readonly Weapon Hispano20 = new() { Name = "20MM HISPANO", CaliberIn = 0.787f, Power = 45f, RefSpeedFtS = 2880f };
-    public static readonly Weapon Mg17 = new() { Name = "7.92MM MG 17", CaliberIn = 0.312f, Power = 10.5f, RefSpeedFtS = 2600f };
-    public static readonly Weapon MgFf20 = new() { Name = "20MM MG FF", CaliberIn = 0.787f, Power = 38f, RefSpeedFtS = 1920f };
+    public static readonly Weapon Hispano20 = new() { Name = "20MM HISPANO", CaliberIn = 0.787f, Power = 45f, RefSpeedFtS = 2880f, Destructive = 85f };
+    public static readonly Weapon Mg17 = new() { Name = "7.92MM MG 17", CaliberIn = 0.312f, Power = 10.5f, RefSpeedFtS = 2600f, Destructive = 30f };
+    public static readonly Weapon MgFf20 = new() { Name = "20MM MG FF", CaliberIn = 0.787f, Power = 38f, RefSpeedFtS = 1920f, Destructive = 75f };
 
     public static float VelocityExponent = 2f;
 
@@ -52,6 +59,14 @@ public static class DamageTuning
     /// <summary>What's left after armour is multiplied by this before it comes off the part's hit points (1 = as is).
     /// Same order as Armor.</summary>
     public static readonly float[] DamageMultiplier = { 1f, 1f, 1f, 1f, 1f, 1f };
+
+    /// <summary>How hard each part is to destroy outright, 0-100 (see the class notes). Same order as Armor. With the .303's
+    /// Destructive of 30: engine and canopy have no floor, the tail's is 10 hp, wings and fuselage 25 hp.</summary>
+    public static readonly float[] Integrity = { 30f, 10f, 55f, 55f, 40f, 55f };
+
+    /// <summary>Below the floor, damage is multiplied by a factor that slides from BelowFloorScale (at the floor) down to
+    /// MinScale (at zero hit points), so a weak weapon keeps chipping away but ever more slowly.</summary>
+    public static float BelowFloorScale = 0.35f, MinScale = 0.05f;
 
     /// <summary>The state bands: at MaxHp undamaged, above SlightAbove slight, above ModerateAbove moderate, above
     /// CriticalAbove critical, above zero black, at zero gone.</summary>
@@ -111,15 +126,37 @@ public static class DamageModel
         return power * (DamageTuning.RollMin + (DamageTuning.RollMax - DamageTuning.RollMin) * t);
     }
 
-    /// <summary>One round hits a part: roll, take off the armour, and take what's left off its hit points. Returns the
-    /// hit points lost (0 if the armour stopped it).</summary>
+    /// <summary>The hit points a weapon can take a part down to at full effect (0 = it can destroy it outright).</summary>
+    public static float Floor(Part part, DamageTuning.Weapon w) =>
+        DamageTuning.MaxHp * Math.Clamp((DamageTuning.Integrity[(int)part] - w.Destructive) / 100f, 0f, 1f);
+
+    /// <summary>One round hits a part: roll, take off the armour, and take what's left off its hit points, at full
+    /// effect down to the weapon's floor for that part and reduced below it. Returns the hit points lost (0 if the
+    /// armour stopped it).</summary>
     public static float Hit(float[] parts, Part part, DamageTuning.Weapon w, float impactSpeedFtS, Random rng)
     {
         var i = (int)part;
         var left = Roll(w, impactSpeedFtS, rng) - DamageTuning.Armor[i];
         if (left <= 0f || parts[i] <= 0f) return 0f;
-        var loss = MathF.Min(parts[i], left * DamageTuning.DamageMultiplier[i]);
-        parts[i] -= loss;
+        var raw = left * DamageTuning.DamageMultiplier[i];
+        var hp = parts[i];
+        var floor = Floor(part, w);
+        if (hp > floor)
+        {
+            // Full effect down to the floor; whatever would go past it carries on at the reduced rate.
+            var full = MathF.Min(raw, hp - floor);
+            hp -= full;
+            raw -= full;
+        }
+        if (raw > 0f && floor > 0f)
+        {
+            var k = DamageTuning.MinScale + (DamageTuning.BelowFloorScale - DamageTuning.MinScale) * MathHelper.Clamp(hp / floor, 0f, 1f);
+            hp -= raw * k;
+        }
+        else hp -= raw;
+        hp = MathF.Max(0f, hp);
+        var loss = parts[i] - hp;
+        parts[i] = hp;
         return loss;
     }
 
