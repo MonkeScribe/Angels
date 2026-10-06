@@ -24,6 +24,7 @@ import bpy
 import math
 import os
 import json
+import shutil
 import numpy as np
 from mathutils import Euler, Vector
  
@@ -50,8 +51,11 @@ TOON               = True      # hard pixel edges, black outline, banded shading
 TOON_OUTLINE       = False     # add a 1px black outline (Freestyle). Leave False if your scene already draws outlines,
                                # as your current renders do, or you'll get doubled lines.
 TOON_OUTLINE_PX    = 1.0       # outline thickness in pixels
-TOON_BANDS         = 4         # brightness steps per colour: 2 = hard light/shadow, 3-4 = a few tones, 0 = off
-TOON_COLOR_STEPS   = 7         # then every colour channel is snapped to this many levels (fewer = smaller palette, 0 = off)
+TOON_EXPOSURE      = 1.0       # brightness multiplier applied before the toon steps (e.g. 1.3 to lift a dark render)
+TOON_BANDS         = 4         # brightness steps: 2 = hard light/shadow, 3-4 = a few tones, 0 = off
+TOON_HUE_STEPS     = 24        # hues allowed round the colour wheel (24 = every 15 degrees, 0 = off)
+TOON_SAT_STEPS     = 6         # colourfulness steps, 0 (grey) to full (0 = off)
+KEEP_RAW           = True      # also keep the untouched render of every frame in a "raw" folder, to compare against
  
 OUT_DIR            = "//sprites/"   # "//" = folder next to the .blend file
 MAKE_SPRITE_SHEET  = True
@@ -211,6 +215,10 @@ def main():
             r.filepath = path
             bpy.ops.render.render(write_still=True)
             if TOON:
+                if KEEP_RAW:
+                    raw_dir = os.path.join(out, "raw")
+                    os.makedirs(raw_dir, exist_ok=True)
+                    shutil.copyfile(path, os.path.join(raw_dir, name))
                 stylize(path)
             frames.append(dict(az=yaw, el=pitch, file=name, path=path,
                                col=yaws.index(yaw), row=pitches.index(pitch)))
@@ -252,24 +260,54 @@ def main():
         scene.camera = saved["camera"]
  
  
+def rgb_to_hsv(rgb):
+    r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    mx = rgb.max(axis=1)
+    d = mx - rgb.min(axis=1)
+    safe = np.where(d > 1e-6, d, 1.0)
+    h = np.where(mx == r, ((g - b) / safe) % 6.0,
+        np.where(mx == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0))
+    h = np.where(d > 1e-6, h / 6.0, 0.0) % 1.0
+    s = np.where(mx > 1e-6, d / np.maximum(mx, 1e-6), 0.0)
+    return h, s, mx
+
+
+def hsv_to_rgb(h, s, v):
+    h6 = h * 6.0
+    i = np.floor(h6).astype(np.int64) % 6
+    f = h6 - np.floor(h6)
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    conds = [i == k for k in range(6)]
+    r = np.select(conds, [v, q, p, p, t, v])
+    g = np.select(conds, [t, v, v, q, p, p])
+    b = np.select(conds, [p, p, t, v, v, q])
+    return np.stack([r, g, b], axis=1)
+
+
 def stylize(path):
-    """Pixel-art finish on one rendered frame: hard alpha edges, banded brightness, snapped colours."""
+    """Pixel-art finish on one rendered frame: hard alpha edges, then brightness, hue and colourfulness
+    each snapped to a few steps. It works on hue / saturation / brightness rather than on the red, green and
+    blue channels separately, so snapping can't shift a colour (a tan going maroon) and a dark or bright render
+    keeps its colours."""
     img = bpy.data.images.load(path, check_existing=False)
     n = img.size[0] * img.size[1]
     px = np.empty(n * 4, dtype=np.float32)
     img.pixels.foreach_get(px)
     p = px.reshape(-1, 4)
     solid = p[:, 3] > 0.5                       # no half-transparent edge pixels
-    rgb = np.clip(p[:, :3], 0.0, 1.0)
+    rgb = np.clip(p[:, :3] * TOON_EXPOSURE, 0.0, 1.0)
 
+    h, sat, v = rgb_to_hsv(rgb)
+    keep = v < 0.06                             # the black outline stays black
     if TOON_BANDS and TOON_BANDS > 1:
-        v = rgb.max(axis=1)
-        keep = v < 0.06                         # the black outline stays black
-        qv = np.maximum(np.round(v * TOON_BANDS) / TOON_BANDS, 0.5 / TOON_BANDS)
-        k = np.where(keep | (v <= 1e-6), 1.0, qv / np.maximum(v, 1e-6))
-        rgb = np.clip(rgb * k[:, None], 0.0, 1.0)
-    if TOON_COLOR_STEPS and TOON_COLOR_STEPS > 1:
-        rgb = np.round(rgb * (TOON_COLOR_STEPS - 1)) / (TOON_COLOR_STEPS - 1)
+        v = np.where(keep, v, np.maximum(np.round(v * TOON_BANDS) / TOON_BANDS, 0.5 / TOON_BANDS))
+    if TOON_SAT_STEPS and TOON_SAT_STEPS > 0:
+        sat = np.round(sat * TOON_SAT_STEPS) / TOON_SAT_STEPS
+    if TOON_HUE_STEPS and TOON_HUE_STEPS > 0:
+        h = (np.round(h * TOON_HUE_STEPS) / TOON_HUE_STEPS) % 1.0
+    rgb = np.where(keep[:, None], rgb, hsv_to_rgb(h, np.clip(sat, 0.0, 1.0), np.clip(v, 0.0, 1.0)))
 
     rgb[~solid] = 0.0
     p[:, :3] = rgb
