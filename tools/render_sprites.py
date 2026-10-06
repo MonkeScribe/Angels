@@ -16,7 +16,8 @@ HOW TO USE
      If az000 is not head-on, change NOSE_YAW_OFFSET below.
  
 Nothing in your scene is changed permanently: the script makes its own
-temporary camera and sun, and puts every setting back when it's done.
+temporary camera, and puts every setting back when it's done. It leaves the
+lighting to your scene.
 """
  
 import bpy
@@ -37,11 +38,8 @@ MIRROR             = True      # plane is left/right symmetric: render half, fli
 FRAME_SIZE         = 256       # pixels per frame (square)
 MARGIN             = 1.05      # 1.0 = plane just touches the frame edge at its widest angle
  
-LIGHTING           = "script"  # "script" = sun that follows the camera (consistent sprites)
-                               # "scene"  = use the lights already in your scene
-SUN_STRENGTH       = 4.0
-SUN_OFFSET_UP      = 25        # degrees the light comes from above the camera
-SUN_OFFSET_SIDE    = 30        # degrees the light comes from the side (negative = other side)
+# Lighting is not touched: the script adds no lights and hides none, so it renders with whatever lights
+# (and world) your scene already has. Set up the universal lighting in the scene itself.
  
 HIDE_DURING_RENDER = []        # parts of object names to hide, e.g. ["prop", "blade"]
 SAMPLES            = 32        # render quality (EEVEE samples)
@@ -160,22 +158,6 @@ def main():
         scene.camera = cam
         cam.rotation_mode = "XYZ"
  
-        # ---------- lighting ----------
-        sun = None
-        if LIGHTING == "script":
-            for o in scene.objects:
-                if o.type == "LIGHT" and not o.hide_render:
-                    o.hide_render = True
-                    hidden.append(o)
-            sun_data = bpy.data.lights.new("SpriteSun", "SUN")
-            sun_data.energy = SUN_STRENGTH
-            sun = bpy.data.objects.new("SpriteSun", sun_data)
-            scene.collection.objects.link(sun)
-            temp_objects.append(sun)
-            sun.rotation_mode = "XYZ"
-        sun_offset = Euler((math.radians(-SUN_OFFSET_UP),
-                            math.radians(SUN_OFFSET_SIDE), 0)).to_matrix()
- 
         # ---------- hide parts (e.g. propeller blades) ----------
         frags = [f.lower() for f in HIDE_DURING_RENDER]
         for o in scene.objects:
@@ -196,9 +178,6 @@ def main():
             forward = rot.to_matrix() @ Vector((0, 0, -1))
             cam.rotation_euler = rot
             cam.location = centre - forward * dist
-            if sun:
-                sun.rotation_euler = (rot.to_matrix() @ sun_offset).to_euler("XYZ")
-                sun.location = cam.location
  
             name = f"az{yaw:03d}_el{pitch:+03d}.png"
             path = os.path.join(out, name)
@@ -220,8 +199,6 @@ def main():
             bpy.data.objects.remove(o, do_unlink=True)
             if isinstance(data, bpy.types.Camera):
                 bpy.data.cameras.remove(data)
-            elif isinstance(data, bpy.types.Light):
-                bpy.data.lights.remove(data)
         for o in hidden:
             o.hide_render = False
         r.engine = saved["engine"]
