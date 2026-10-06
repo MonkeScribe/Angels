@@ -39,6 +39,8 @@ public class Game1 : Game
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
     // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
+    private const float AimMaxStepPx = 80f;      // a tick's mouse movement beyond this is a glitch, not aiming
+    private const int AimWarpSkipTicks = 3;
     private const float AimMouseDegPerPx = 0.05f; // aim swing per px of mouse movement at 720p
     private static readonly float AimYawTrimMax = MathF.PI; // free: once the assist lets go the player can follow the target anywhere
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
@@ -79,6 +81,8 @@ public class Game1 : Game
     private int _assistTicks;                    // ticks left of the assist flying onto the target
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
     private Point _preAimMouse;                  // where the pointer was when mouse aim took it, to put it back after
+    private Point _aimPrev;                      // the pointer's last reading during mouse aim
+    private int _aimSkip;                        // readings to ignore after the game has moved the pointer
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
     private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
@@ -474,26 +478,42 @@ public class Game1 : Game
         else _lastPointed = null;
 
         // Mouse aim: while the aimer is up the pointer disappears and the mouse moves the aim point instead,
-        // left/right swinging the heading the assist rolls toward, up/down the pitch. Each tick the pointer is put
-        // back in the middle so only its movement counts. Losing the target from the sight drops the aimer and
-        // brings the pointer back.
+        // left/right swinging the heading the assist rolls toward, up/down the pitch. Only the mouse's movement
+        // since the last tick counts. The hidden pointer is left where it is and only put back in the middle when
+        // it nears an edge, and the readings straight after that are skipped: on macOS a pointer moved by the game
+        // lands late and the mouse is briefly ignored, so the first readings after a move are not real movement.
+        // Losing the target from the sight drops the aimer and brings the pointer back.
         if (target)
         {
-            var mid = new Point(vp.Width / 2, vp.Height / 2);
+            var now = new Point(m.X, m.Y);
             if (!_mouseAim)
             {
-                _preAimMouse = new Point(m.X, m.Y);
+                _preAimMouse = now;
                 _mouseAim = true;
                 _aimYaw = 0f;
+                _aimPrev = now;
+                _aimSkip = 0;
                 IsMouseVisible = false;
             }
             else if (IsActive)
             {
-                var k = AimMouseDegPerPx / Scale;
-                _aimYaw = MathHelper.Clamp(_aimYaw + MathHelper.ToRadians(d.X * k), -AimYawTrimMax, AimYawTrimMax);
-                _fm.AimTrimBy(-d.Y * k);
+                if (_aimSkip > 0) _aimSkip--;
+                else
+                {
+                    float dx = MathHelper.Clamp(now.X - _aimPrev.X, -AimMaxStepPx, AimMaxStepPx);
+                    float dy = MathHelper.Clamp(now.Y - _aimPrev.Y, -AimMaxStepPx, AimMaxStepPx);
+                    var k = AimMouseDegPerPx / Scale;
+                    _aimYaw = MathHelper.Clamp(_aimYaw + MathHelper.ToRadians(dx * k), -AimYawTrimMax, AimYawTrimMax);
+                    _fm.AimTrimBy(-dy * k);
+                }
+                _aimPrev = now;
+                // Near an edge the hidden pointer would stop moving, so bring it back to the middle.
+                if (now.X < vp.Width / 5 || now.X > vp.Width * 4 / 5 || now.Y < vp.Height / 5 || now.Y > vp.Height * 4 / 5)
+                {
+                    Mouse.SetPosition(vp.Width / 2, vp.Height / 2);
+                    _aimSkip = AimWarpSkipTicks;
+                }
             }
-            if (IsActive) Mouse.SetPosition(mid.X, mid.Y);
         }
         else if (_mouseAim)
         {
