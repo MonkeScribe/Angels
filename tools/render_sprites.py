@@ -44,6 +44,14 @@ MARGIN             = 1.05      # 1.0 = plane just touches the frame edge at its 
 HIDE_DURING_RENDER = []        # parts of object names to hide, e.g. ["prop", "blade"]
 SAMPLES            = 32        # render quality (EEVEE samples)
 STANDARD_COLORS    = True      # True = colours match the textures (best for games)
+
+# ---- pixel-art / toon look (done at render time, so every frame is styled identically) ----
+TOON               = True      # hard pixel edges, black outline, banded shading, limited colours
+TOON_OUTLINE       = False     # add a 1px black outline (Freestyle). Leave False if your scene already draws outlines,
+                               # as your current renders do, or you'll get doubled lines.
+TOON_OUTLINE_PX    = 1.0       # outline thickness in pixels
+TOON_BANDS         = 4         # brightness steps per colour: 2 = hard light/shadow, 3-4 = a few tones, 0 = off
+TOON_COLOR_STEPS   = 7         # then every colour channel is snapped to this many levels (fewer = smaller palette, 0 = off)
  
 OUT_DIR            = "//sprites/"   # "//" = folder next to the .blend file
 MAKE_SPRITE_SHEET  = True
@@ -124,7 +132,10 @@ def main():
         pct=r.resolution_percentage, transparent=r.film_transparent,
         fmt=r.image_settings.file_format, mode=r.image_settings.color_mode,
         path=r.filepath, view=vs.view_transform, look=vs.look, camera=scene.camera,
+        filter=r.filter_size, freestyle=r.use_freestyle, lt_mode=r.line_thickness_mode,
+        lt=r.line_thickness, vl_freestyle=bpy.context.view_layer.use_freestyle,
     )
+    outline_set = None
     hidden = []
     temp_objects = []
  
@@ -145,6 +156,22 @@ def main():
             vs.view_transform = "Standard"
             vs.look = "None"
  
+        # ---------- toon look: no smoothing, black outline ----------
+        if TOON:
+            r.filter_size = 0.0            # no pixel filtering: every pixel is one clean sample
+            if TOON_OUTLINE:
+                r.use_freestyle = True
+                r.line_thickness_mode = "ABSOLUTE"
+                r.line_thickness = TOON_OUTLINE_PX
+                vl = bpy.context.view_layer
+                vl.use_freestyle = True
+                outline_set = vl.freestyle_settings.linesets.new("SpriteOutline")
+                outline_set.select_silhouette = True
+                outline_set.select_border = True
+                outline_set.select_crease = True
+                outline_set.linestyle.color = (0.0, 0.0, 0.0)
+                outline_set.linestyle.thickness = TOON_OUTLINE_PX
+
         # ---------- temporary camera ----------
         dist = radius * 4
         cam_data = bpy.data.cameras.new("SpriteCam")
@@ -183,6 +210,8 @@ def main():
             path = os.path.join(out, name)
             r.filepath = path
             bpy.ops.render.render(write_still=True)
+            if TOON:
+                stylize(path)
             frames.append(dict(az=yaw, el=pitch, file=name, path=path,
                                col=yaws.index(yaw), row=pitches.index(pitch)))
             log(f"{i}/{len(shots)}  {name}")
@@ -201,6 +230,16 @@ def main():
                 bpy.data.cameras.remove(data)
         for o in hidden:
             o.hide_render = False
+        if outline_set is not None:
+            style = outline_set.linestyle
+            bpy.context.view_layer.freestyle_settings.linesets.remove(outline_set)
+            if style.users == 0:
+                bpy.data.linestyles.remove(style)
+        r.filter_size = saved["filter"]
+        r.use_freestyle = saved["freestyle"]
+        r.line_thickness_mode = saved["lt_mode"]
+        r.line_thickness = saved["lt"]
+        bpy.context.view_layer.use_freestyle = saved["vl_freestyle"]
         r.engine = saved["engine"]
         r.resolution_x, r.resolution_y = saved["rx"], saved["ry"]
         r.resolution_percentage = saved["pct"]
@@ -213,6 +252,35 @@ def main():
         scene.camera = saved["camera"]
  
  
+def stylize(path):
+    """Pixel-art finish on one rendered frame: hard alpha edges, banded brightness, snapped colours."""
+    img = bpy.data.images.load(path, check_existing=False)
+    n = img.size[0] * img.size[1]
+    px = np.empty(n * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    p = px.reshape(-1, 4)
+    solid = p[:, 3] > 0.5                       # no half-transparent edge pixels
+    rgb = np.clip(p[:, :3], 0.0, 1.0)
+
+    if TOON_BANDS and TOON_BANDS > 1:
+        v = rgb.max(axis=1)
+        keep = v < 0.06                         # the black outline stays black
+        qv = np.maximum(np.round(v * TOON_BANDS) / TOON_BANDS, 0.5 / TOON_BANDS)
+        k = np.where(keep | (v <= 1e-6), 1.0, qv / np.maximum(v, 1e-6))
+        rgb = np.clip(rgb * k[:, None], 0.0, 1.0)
+    if TOON_COLOR_STEPS and TOON_COLOR_STEPS > 1:
+        rgb = np.round(rgb * (TOON_COLOR_STEPS - 1)) / (TOON_COLOR_STEPS - 1)
+
+    rgb[~solid] = 0.0
+    p[:, :3] = rgb
+    p[:, 3] = solid.astype(np.float32)
+    img.pixels.foreach_set(p.ravel())
+    img.filepath_raw = path
+    img.file_format = "PNG"
+    img.save()
+    bpy.data.images.remove(img)
+
+
 def make_sheet(frames, cols, rows, out):
     S = FRAME_SIZE
     W, H = cols * S, rows * S
