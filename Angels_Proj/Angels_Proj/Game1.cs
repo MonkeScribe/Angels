@@ -475,7 +475,8 @@ public class Game1 : Game
             return;
         }
         _prevLeft = m.LeftButton == ButtonState.Pressed;
-        if (kb.IsKeyDown(Keys.Escape)) Exit();
+        // A fresh press only: the press that closed the debug menu is still held on the next tick and mustn't quit the game.
+        if (Pressed(Keys.Escape)) Exit();
         if (Pressed(Keys.R)) Reset();
 
         var vp = GraphicsDevice.Viewport;
@@ -613,7 +614,7 @@ public class Game1 : Game
         var camFt = World.ToFt(_pos, _fm.Altitude);
         _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
-        if (_hovered != null) SpriteZones(_hovered, PlaneScreen(), _hoverZones);
+        if (_hovered != null && _showHitboxes) SpriteZones(_hovered, PlaneScreen(), _hoverZones); // drawn in the HITBOXES debug view only
         if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) || _tracked.State != Traffic.State.Flying ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
@@ -910,8 +911,8 @@ public class Game1 : Game
                 new Vector2(len, MathF.Max(1f, 1.2f * s)), SpriteEffects.None, 0f);
         }
 
-        // The plane under the mouse: its targeting box (one box over the whole sprite), green, filled translucent
-        // with an outline. The mouse is over the plane when it is inside this (plus a little slack).
+        // HITBOXES debug view: the plane under the mouse shows its targeting box (one box over the whole sprite), green,
+        // filled translucent with an outline. The mouse is over the plane when it is inside this (plus a little slack).
         foreach (var (poly, damage) in _hoverZones)
         {
             var col = new Color(80, 235, 110);
