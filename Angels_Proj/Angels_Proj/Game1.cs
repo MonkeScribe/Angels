@@ -83,6 +83,8 @@ public class Game1 : Game
     private Point _preAimMouse;                  // where the pointer was when mouse aim took it, to put it back after
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
+    private Traffic.Plane _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
+    private readonly System.Collections.Generic.List<(Vector3[] corners, float damage)> _hoverBoxes = new();
     private bool _showHitboxes;                 // debug menu: draw the planes' hit boxes on the map and in the sight
     private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, float damage)> _boxEdges = new();
     private bool _mouseAim;                      // the pointer is captured for mouse aim
@@ -413,6 +415,9 @@ public class Game1 : Game
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
+        _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect, needSight: false);
+        _hoverBoxes.Clear();
+        if (_hovered != null) Traffic.HitBoxCorners(_hovered, _hoverBoxes);
         if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) || _tracked.State != Traffic.State.Flying ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
@@ -689,6 +694,45 @@ public class Game1 : Game
                 new Vector2(len, MathF.Max(1f, 1.2f * s)), SpriteEffects.None, 0f);
         }
 
+        // The hit boxes of the plane under the mouse: each box's footprint as seen from above, filled, with its
+        // outline; coloured by the damage a round does there.
+        if (_hoverBoxes.Count > 0)
+        {
+            Vector2 P(Vector3 q) => centre + (new Vector2(q.X, q.Z) * World.PxPerFoot - _pos) * (s * GroundZoom / MathF.Max(DistFactor(q.Y), 0.2f));
+            foreach (var (corners, damage) in _hoverBoxes)
+            {
+                var col = damage >= 100f ? new Color(255, 60, 60) : damage >= 80f ? new Color(255, 150, 40) : new Color(255, 230, 70);
+                var pts = new System.Collections.Generic.List<Vector2>();
+                foreach (var q in corners) pts.Add(P(q));
+                var hull = ConvexHull(pts);
+                if (hull.Count < 3) continue;
+                float minY = float.MaxValue, maxY = float.MinValue;
+                foreach (var h in hull) { minY = MathF.Min(minY, h.Y); maxY = MathF.Max(maxY, h.Y); }
+                for (var y = MathF.Floor(minY); y <= MathF.Ceiling(maxY); y += 1f)
+                {
+                    float lo = float.MaxValue, hi = float.MinValue;
+                    for (var i = 0; i < hull.Count; i++)
+                    {
+                        Vector2 a = hull[i], b = hull[(i + 1) % hull.Count];
+                        if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y))
+                        {
+                            var x = a.X + (y - a.Y) / (b.Y - a.Y) * (b.X - a.X);
+                            lo = MathF.Min(lo, x); hi = MathF.Max(hi, x);
+                        }
+                    }
+                    if (hi > lo) _sb.Draw(_pixel, new Rectangle((int)lo, (int)y, Math.Max(1, (int)(hi - lo)), 1), col * 0.28f);
+                }
+                for (var i = 0; i < hull.Count; i++)
+                {
+                    Vector2 a = hull[i], b = hull[(i + 1) % hull.Count];
+                    var dl = b - a; var len = dl.Length();
+                    if (len < 0.5f) continue;
+                    _sb.Draw(_pixel, (a + b) / 2f, null, col, MathF.Atan2(dl.Y, dl.X), new Vector2(0.5f, 0.5f),
+                        new Vector2(len, MathF.Max(1f, 1.5f * s)), SpriteEffects.None, 0f);
+                }
+            }
+        }
+
         // Particles (world space).
         foreach (var p in _particles)
         {
@@ -796,6 +840,28 @@ public class Game1 : Game
             _sb.End();
             from = rt;
         }
+    }
+
+    /// <summary>Convex hull of a point set (Andrew's monotone chain), counter-clockwise.</summary>
+    private static System.Collections.Generic.List<Vector2> ConvexHull(System.Collections.Generic.List<Vector2> pts)
+    {
+        var p = new System.Collections.Generic.List<Vector2>(pts);
+        p.Sort((a, b) => a.X != b.X ? a.X.CompareTo(b.X) : a.Y.CompareTo(b.Y));
+        var h = new System.Collections.Generic.List<Vector2>();
+        static float Cross(Vector2 o, Vector2 a, Vector2 b) => (a.X - o.X) * (b.Y - o.Y) - (a.Y - o.Y) * (b.X - o.X);
+        foreach (var q in p)
+        {
+            while (h.Count >= 2 && Cross(h[^2], h[^1], q) <= 0f) h.RemoveAt(h.Count - 1);
+            h.Add(q);
+        }
+        var lower = h.Count + 1;
+        for (var i = p.Count - 2; i >= 0; i--)
+        {
+            while (h.Count >= lower && Cross(h[^2], h[^1], p[i]) <= 0f) h.RemoveAt(h.Count - 1);
+            h.Add(p[i]);
+        }
+        if (h.Count > 1) h.RemoveAt(h.Count - 1);
+        return h;
     }
 
     private enum TrafficPass { Shadows, Below, Above }

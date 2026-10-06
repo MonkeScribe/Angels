@@ -209,6 +209,17 @@ public sealed class Traffic
     /// box does so callers can colour them. For the debug hit box view.</summary>
     public static void HitBoxEdges(Plane p, List<(Vector3 a, Vector3 b, float damage)> into)
     {
+        var boxes = new List<(Vector3[] c, float damage)>();
+        HitBoxCorners(p, boxes);
+        foreach (var (c, damage) in boxes)
+            for (var i = 0; i < 8; i++)
+                for (var bit = 1; bit <= 4; bit <<= 1)
+                    if ((i & bit) == 0) into.Add((c[i], c[i | bit], damage));
+    }
+
+    /// <summary>The eight world corners (feet) of each of a plane's hit boxes, with the damage each box does.</summary>
+    public static void HitBoxCorners(Plane p, List<(Vector3[] corners, float damage)> into)
+    {
         World.Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
         var centre = World.ToFt(p.Pos, p.Altitude);
         foreach (var bx in Boxes)
@@ -219,9 +230,7 @@ public sealed class Traffic
                 float x = (i & 1) == 0 ? bx.Min.X : bx.Max.X, y = (i & 2) == 0 ? bx.Min.Y : bx.Max.Y, z = (i & 4) == 0 ? bx.Min.Z : bx.Max.Z;
                 c[i] = centre + r * x + u * y + (-f) * z;   // local +z is backwards
             }
-            for (var i = 0; i < 8; i++)
-                for (var bit = 1; bit <= 4; bit <<= 1)
-                    if ((i & bit) == 0) into.Add((c[i], c[i | bit], bx.Damage));
+            into.Add((c, bx.Damage));
         }
     }
 
