@@ -7,7 +7,8 @@ namespace Angels_Proj;
 /// <summary>
 /// Other aircraft: loose V formations flying lazy curves at assorted altitudes, with a basic damage model.
 /// A hit that gets through ignites a plane; it leaves the formation, burns, and spirals down at a steep
-/// angle until it hits the ground. Planes are not full flight models, just constant-speed flyers.
+/// angle until it hits the ground (see Damage.cs for how hits damage each part). Planes are not full flight models,
+/// just constant-speed flyers.
 /// Formations that drift out of the area where they could be seen are recycled somewhere visible.
 /// </summary>
 public sealed class Traffic
@@ -30,7 +31,7 @@ public sealed class Traffic
         public float Mph, TurnRate;              // TurnRate: rad per tick
         public int Color;
         public State State;
-        public float Health = 100f;
+        public readonly float[] Parts = DamageModel.NewParts();   // hit points of each Part (see Damage.cs)
         public float SpinDir = 1f;
         internal Formation Formation;
         internal int Slot;
@@ -44,21 +45,7 @@ public sealed class Traffic
         public readonly List<Plane> Planes = new();
     }
 
-    // Hit boxes in the plane's local frame (x right, y up, -z forward), feet, with the damage a round does there.
-    private readonly struct Box
-    {
-        public readonly Vector3 Min, Max;
-        public readonly float Damage;
-        public Box(Vector3 min, Vector3 max, float damage) { Min = min; Max = max; Damage = damage; }
-    }
-
-    private const float IgniteHealth = 50f; // any hit below does >= 50 damage, so one hit sets a plane alight
-    private static readonly Box[] Boxes =
-    {
-        new(new Vector3(-3f, -3f, -16f), new Vector3(3f, 3f, 17f), 100f),        // fuselage and engine
-        new(new Vector3(-18.6f, -1f, -4.2f), new Vector3(18.6f, 1f, 4.7f), 60f), // wings
-        new(new Vector3(-5.4f, -0.3f, 12.8f), new Vector3(5.4f, 7f, 16.8f), 80f),// tailplane and fin
-    };
+    // Hit boxes: DamageTuning.Fighter (Damage.cs).
 
     private static readonly Vector2[] Slots =
     {
@@ -183,10 +170,17 @@ public sealed class Traffic
         _formations.Add(f);
     }
 
-    /// <summary>Hit scan: the nearest plane whose hit boxes the ray passes through within maxRange feet.</summary>
-    public bool RayHit(Vector3 origin, Vector3 dir, float maxRange, out Plane hit, out float distance, out float damage)
+    /// <summary>A plane's velocity, ft/s in the gunsight's world frame.</summary>
+    public static Vector3 Velocity(Plane p)
     {
-        hit = null; distance = maxRange; damage = 0f;
+        World.Basis(p.Heading, p.Pitch, p.Bank, out _, out _, out var f);
+        return f * p.Mph * 1.4667f;
+    }
+
+    /// <summary>Hit scan: the nearest plane whose hit boxes the ray passes through within maxRange feet, and the part hit.</summary>
+    public bool RayHit(Vector3 origin, Vector3 dir, float maxRange, out Plane hit, out float distance, out Part part)
+    {
+        hit = null; distance = maxRange; part = Part.Fuselage;
         foreach (var p in _all)
         {
             World.Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
@@ -196,33 +190,36 @@ public sealed class Traffic
             // Into the plane's frame (local +z is backwards, so forward is -z).
             Vector3 o = new(Vector3.Dot(rel, r), Vector3.Dot(rel, u), Vector3.Dot(rel, -f));
             Vector3 d = new(Vector3.Dot(dir, r), Vector3.Dot(dir, u), Vector3.Dot(dir, -f));
-            foreach (var b in Boxes)
-                if (Slab(o, d, b.Min, b.Max, out var t) && t < distance)
+            foreach (var b in DamageTuning.Fighter)
+                if (p.Parts[(int)b.Part] > 0f && Slab(o, d, b.Min, b.Max, out var t) && t < distance)
                 {
-                    distance = t; hit = p; damage = b.Damage;
+                    distance = t; hit = p; part = b.Part;
                 }
         }
         return hit != null;
     }
 
-    /// <summary>The twelve edges of every hit box of a plane, as pairs of world points (feet), with the damage the
-    /// box does so callers can colour them. For the debug hit box view.</summary>
-    public static void HitBoxEdges(Plane p, List<(Vector3 a, Vector3 b, float damage)> into)
+    /// <summary>The twelve edges of every hit box of a plane, as pairs of world points (feet), coloured by the state of
+    /// the part the box belongs to. For the debug hit box view.</summary>
+    public static void HitBoxEdges(Plane p, List<(Vector3 a, Vector3 b, Color color)> into)
     {
-        var boxes = new List<(Vector3[] c, float damage)>();
+        var boxes = new List<(Vector3[] c, Part part)>();
         HitBoxCorners(p, boxes);
-        foreach (var (c, damage) in boxes)
+        foreach (var (c, part) in boxes)
+        {
+            var color = DamageModel.StateColor(DamageModel.StateOf(p.Parts[(int)part]));
             for (var i = 0; i < 8; i++)
                 for (var bit = 1; bit <= 4; bit <<= 1)
-                    if ((i & bit) == 0) into.Add((c[i], c[i | bit], damage));
+                    if ((i & bit) == 0) into.Add((c[i], c[i | bit], color));
+        }
     }
 
-    /// <summary>The eight world corners (feet) of each of a plane's hit boxes, with the damage each box does.</summary>
-    public static void HitBoxCorners(Plane p, List<(Vector3[] corners, float damage)> into)
+    /// <summary>The eight world corners (feet) of each of a plane's hit boxes, with the part each box belongs to.</summary>
+    public static void HitBoxCorners(Plane p, List<(Vector3[] corners, Part part)> into)
     {
         World.Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
         var centre = World.ToFt(p.Pos, p.Altitude);
-        foreach (var bx in Boxes)
+        foreach (var bx in DamageTuning.Fighter)
         {
             var c = new Vector3[8];
             for (var i = 0; i < 8; i++)
@@ -230,7 +227,7 @@ public sealed class Traffic
                 float x = (i & 1) == 0 ? bx.Min.X : bx.Max.X, y = (i & 2) == 0 ? bx.Min.Y : bx.Max.Y, z = (i & 4) == 0 ? bx.Min.Z : bx.Max.Z;
                 c[i] = centre + r * x + u * y + (-f) * z;   // local +z is backwards
             }
-            into.Add((c, bx.Damage));
+            into.Add((c, bx.Part));
         }
     }
 
@@ -257,16 +254,18 @@ public sealed class Traffic
         return true;
     }
 
-    /// <summary>Applies a hit. One that does enough damage sets the plane alight and takes it out of its formation.</summary>
-    public void Damage(Plane p, float amount)
+    /// <summary>A round hits a part of a plane (see DamageModel.Hit). When the damage brings the plane down it catches fire
+    /// and leaves its formation. Returns the hit points the part lost.</summary>
+    public float Hit(Plane p, Part part, DamageTuning.Weapon weapon, float impactSpeedFtS)
     {
-        p.Health -= amount;
-        if (p.State != State.Flying || p.Health > IgniteHealth) return;
+        var loss = DamageModel.Hit(p.Parts, part, weapon, impactSpeedFtS, _rng);
+        if (p.State != State.Flying || !DamageModel.Downed(p.Parts)) return loss;
         p.State = State.Burning;
         p.SpinDir = _rng.Next(2) == 0 ? -1f : 1f;
         p.Formation?.Planes.Remove(p);
         p.Formation = null;
         _loose.Add(p);
         Ignited++;
+        return loss;
     }
 }

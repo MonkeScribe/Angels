@@ -14,7 +14,7 @@ namespace Angels_Proj;
 /// </summary>
 public sealed class Guns
 {
-    // ---- Armament data (Spitfire Mk I, .303 Browning Mk II). Kept here for the damage model to use later. ----
+    // ---- Armament data (Spitfire Mk I, .303 Browning Mk II). What a round does on hitting is in Damage.cs (DamageTuning.Browning303). ----
 
     public const int GunCount = 8;
     public const float CaliberIn = 0.303f;                // bore, inches (7.7 mm)
@@ -82,10 +82,6 @@ public sealed class Guns
         if (age < BurnoutS) return 1f;
         return MathF.Max(0f, 1f - (age - BurnoutS) / (DarkS - BurnoutS));
     }
-
-    /// <summary>Per-round damage scale, against the hit boxes' values, until damage uses calibre and mass. The boxes
-    /// were tuned for one round in twelve a second; eight guns fire about 150.</summary>
-    public const float DamageScale = 12f / (GunCount * RoundsPerMinutePerGun / 60f);
 
     public struct Round
     {
@@ -169,10 +165,11 @@ public sealed class Guns
             var vel = r.Vel - r.Vel * (DragK * speed * dt) - new Vector3(0f, G * dt, 0f);
             var step = (r.Vel + vel) * 0.5f * dt;
             var len = step.Length();
-            if (len > 0.01f && traffic.RayHit(r.Pos, step / len, len, out var plane, out var dist, out var damage))
+            if (len > 0.01f && traffic.RayHit(r.Pos, step / len, len, out var plane, out var dist, out var part))
             {
                 var at = r.Pos + step / len * dist;
-                traffic.Damage(plane, damage * DamageScale);
+                // The damage roll uses the round's speed relative to the target (Damage.cs).
+                traffic.Hit(plane, part, DamageTuning.Browning303, (r.Vel - Traffic.Velocity(plane)).Length());
                 if (ShowEffects) fx.Spark(at);
                 Rounds.RemoveAt(i);
                 continue;

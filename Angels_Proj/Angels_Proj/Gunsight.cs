@@ -48,7 +48,7 @@ public sealed class Gunsight
 
     /// <summary>Extra world-space lines (feet) to draw in the view, with the damage value that picks their colour. For the
     /// debug hit box view; filled by the game each tick.</summary>
-    public readonly List<(Vector3 A, Vector3 B, float Damage)> DebugLines = new();
+    public readonly List<(Vector3 A, Vector3 B, Color Color)> DebugLines = new();
 
     /// <summary>Would something at this offset from the camera be inside the sight's field of view and range?</summary>
     public static bool Sees(Vector3 rel, Vector3 right, Vector3 up, Vector3 forward, float aspect, float range)
@@ -416,9 +416,7 @@ public sealed class Gunsight
 
         foreach (var dl in DebugLines)
         {
-            var col = dl.Damage >= 100f ? Premul(new Vector3(1f, 0.25f, 0.25f), 1f)
-                : dl.Damage >= 80f ? Premul(new Vector3(1f, 0.6f, 0.15f), 1f) : Premul(new Vector3(1f, 0.9f, 0.3f), 1f);
-            _blendLines.Add(Vtx(dl.A - camPos, col)); _blendLines.Add(Vtx(dl.B - camPos, col));
+            _blendLines.Add(Vtx(dl.A - camPos, dl.Color)); _blendLines.Add(Vtx(dl.B - camPos, dl.Color));
         }
 
         // Tracers: a burning streak, white-hot at the head fading through red to nothing at the tail, a ribbon turned to

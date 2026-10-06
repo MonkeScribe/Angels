@@ -101,7 +101,7 @@ public class Game1 : Game
     private readonly System.Collections.Generic.List<(Vector2[] poly, float damage)> _hoverZones = new();
     private bool _sphereSprite = true;           // debug menu: the player's plane from the sprite sphere (off: the old pitch views)
     private bool _showHitboxes;                 // debug menu: draw the planes' hit boxes on the map and in the sight
-    private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, float damage)> _boxEdges = new();
+    private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, Color color)> _boxEdges = new();
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
     private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
@@ -294,7 +294,7 @@ public class Game1 : Game
 
     // The targeting box of a traffic plane: one box over the whole sprite (96 px, nose up, centred on 48,48), from
     // wingtip to wingtip and nose to tail, in sprite px. Hovering it tells the plane to turn and pitch at the target.
-    // This is separate from the hit boxes that rounds are tested against (see Traffic.Boxes and the HITBOXES view).
+    // This is separate from the hit boxes that rounds are tested against (see DamageTuning.Fighter in Damage.cs and the HITBOXES view).
     private const float BoxX0 = -46f, BoxY0 = -42f, BoxX1 = 46f, BoxY1 = 40f;
     private const float HoverPadPx = 4f;             // sprite px of slack round the box, so the plane is easy to hover
 
@@ -600,7 +600,7 @@ public class Game1 : Game
         _boxEdges.Clear();
         if (_showHitboxes) foreach (var p in _traffic.All) Traffic.HitBoxEdges(p, _boxEdges);
         _gunsight.DebugLines.Clear();
-        foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.damage));
+        foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.color));
         _guns.Update(_traffic, _fx);
         _guns.Tracers(_tracers);
         _firing = false;
@@ -899,10 +899,10 @@ public class Game1 : Game
         }
 
         // Hit boxes (debug menu): each box's edges, every end placed and scaled by its own height like everything
-        // else on the map. Colour shows the damage a round does there: red fuselage, yellow wings, orange tail.
+        // else on the map. Colour shows the state of the part the box belongs to (green undamaged ... red black, grey gone).
         foreach (var e in _boxEdges)
         {
-            var col = e.damage >= 100f ? new Color(255, 60, 60) : e.damage >= 80f ? new Color(255, 150, 40) : new Color(255, 230, 70);
+            var col = e.color;
             Vector2 P(Vector3 q) => centre + (new Vector2(q.X, q.Z) * World.PxPerFoot - _pos) * (s * GroundZoom / MathF.Max(DistFactor(q.Y), 0.2f));
             var a = P(e.a); var b = P(e.b);
             var dl = b - a; var len = dl.Length();
@@ -1081,6 +1081,7 @@ public class Game1 : Game
         if (_cloudsOn) DrawClouds(centre, CloudPass.Above);
 
         DrawHud();
+        if (_showHitboxes) DrawDamageReadout();
         _instruments.Draw(_sb, _fm, GraphicsDevice.Viewport.Bounds, Scale);
         _gunsight.Draw(_sb, _pixel, sightRect, s, _firing, _sightAlpha);
         DrawBanner();
@@ -1320,6 +1321,30 @@ public class Game1 : Game
         PixelFont.Draw(_sb, _pixel, sub, new Vector2((vp.Width - PixelFont.Measure(sub, px2)) / 2f, vp.Height * 0.2f + 9 * px), px2, Color.White);
         var hint = "PRESS R TO FLY AGAIN";
         PixelFont.Draw(_sb, _pixel, hint, new Vector2((vp.Width - PixelFont.Measure(hint, px2)) / 2f, vp.Height * 0.2f + 9 * px + 11 * px2), px2, new Color(234, 242, 255));
+    }
+
+    /// <summary>HITBOXES debug view: each part of the plane being aimed at (or hovered) with its hit points and state.</summary>
+    private void DrawDamageReadout()
+    {
+        var p = _tracked ?? _hovered;
+        if (p == null) return;
+        var s = Scale;
+        var px = Math.Max(2, (int)MathF.Round(2.2f * s));
+        int w = (int)(300 * s), rowH = 10 * px;
+        var x = GraphicsDevice.Viewport.Width - w - (int)(24 * s);
+        var y = (int)(24 * s);
+        _sb.Draw(_pixel, new Rectangle(x - 10, y - 10, w + 20, rowH * (DamageModel.PartCount + 1) + 14), new Color(6, 14, 28, 190));
+        PixelFont.Draw(_sb, _pixel, "TARGET DAMAGE", new Vector2(x, y), px, new Color(255, 206, 84));
+        for (var i = 0; i < DamageModel.PartCount; i++)
+        {
+            var hp = p.Parts[i];
+            var state = DamageModel.StateOf(hp);
+            var ry = y + (i + 1) * rowH;
+            var col = DamageModel.StateColor(state);
+            PixelFont.Draw(_sb, _pixel, DamageModel.Name((Part)i), new Vector2(x, ry), px, col);
+            var v = $"{MathF.Ceiling(hp):0} {DamageModel.Name(state)}";
+            PixelFont.Draw(_sb, _pixel, v, new Vector2(x + w - PixelFont.Measure(v, px), ry), px, col);
+        }
     }
 
     private void DrawHud()
