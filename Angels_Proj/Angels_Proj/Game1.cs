@@ -798,6 +798,73 @@ public class Game1 : Game
             _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
         }
 
+        // Tracers on the map: tiny burning dashes flying along the round's path, white-hot at the head and red behind,
+        // with a faint red glow. Like the real thing they light a little way down the range and die away at the end.
+        // They start at the drawn muzzle and are placed and scaled by their height like everything else.
+        if (Guns.ShowMapTracers)
+        {
+            var tw = Math.Max(1, (int)MathF.Round(s));
+            foreach (var rd in _guns.Rounds)
+            {
+                var glow = Guns.TracerGlow(rd.Age);
+                if (!rd.Tracer || glow < 0.02f) continue;
+                var zt = s * GroundZoom / MathF.Max(DistFactor(rd.Pos.Y), 0.2f);
+                var wp = new Vector2(rd.Pos.X, rd.Pos.Z) * World.PxPerFoot + rd.MapOffset;
+                var sp = centre + (wp - _pos) * zt;
+                var vd = new Vector2(rd.Vel.X, rd.Vel.Z);
+                if (vd.LengthSquared() < 1e-3f) continue;
+                vd.Normalize();
+                var ang = MathF.Atan2(vd.Y, vd.X);
+                // Drawn back from the head: faint glow, red tail, brighter red, white-hot head.
+                void Dash(float from, float len, float width, Color c) =>
+                    _sb.Draw(_pixel, sp - vd * from * tw, null, c, ang, new Vector2(1f, 0.5f), new Vector2(len * tw, width * tw), SpriteEffects.None, 0f);
+                Dash(-1f, 8f, 3f, new Color(255, 40, 20) * (0.22f * glow));
+                Dash(2f, 4f, 1f, new Color(255, 40, 20) * (0.6f * glow));
+                Dash(0f, 3f, 1f, new Color(255, 90, 60) * glow);
+                Dash(-1f, 2f, 1f, new Color(255, 245, 235) * glow);
+            }
+        }
+
+        // The plane under the mouse: its targeting box (one box over the whole sprite), green, filled translucent
+        // with an outline. The mouse is over the plane when it is inside this (plus a little slack).
+        foreach (var (poly, damage) in _hoverZones)
+        {
+            var col = new Color(80, 235, 110);
+            float minY = float.MaxValue, maxY = float.MinValue;
+            foreach (var hp in poly) { minY = MathF.Min(minY, hp.Y); maxY = MathF.Max(maxY, hp.Y); }
+            for (var y = MathF.Floor(minY); y <= MathF.Ceiling(maxY); y += 1f)
+            {
+                float lo = float.MaxValue, hi = float.MinValue;
+                for (var i = 0; i < poly.Length; i++)
+                {
+                    Vector2 a = poly[i], b = poly[(i + 1) % poly.Length];
+                    if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y))
+                    {
+                        var x = a.X + (y - a.Y) / (b.Y - a.Y) * (b.X - a.X);
+                        lo = MathF.Min(lo, x); hi = MathF.Max(hi, x);
+                    }
+                }
+                if (hi > lo) _sb.Draw(_pixel, new Rectangle((int)lo, (int)y, Math.Max(1, (int)(hi - lo)), 1), col * 0.28f);
+            }
+            for (var i = 0; i < poly.Length; i++)
+            {
+                Vector2 a = poly[i], b = poly[(i + 1) % poly.Length];
+                var dl = b - a; var len = dl.Length();
+                if (len < 0.5f) continue;
+                _sb.Draw(_pixel, (a + b) / 2f, null, col, MathF.Atan2(dl.Y, dl.X), new Vector2(0.5f, 0.5f),
+                    new Vector2(len, MathF.Max(1f, 1.5f * s)), SpriteEffects.None, 0f);
+            }
+        }
+
+        // Particles (world space).
+        foreach (var p in _particles)
+        {
+            var t = p.Life / p.MaxLife;
+            var size = Math.Max(1, (int)(p.Size * z * (0.5f + 0.5f * t)));
+            var pos = centre + (p.Pos - _pos) * z;
+            _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
+        }
+
         // Tracers on the map: tiny pure red dashes, 1 px wide and 4 long, flying along the round's path, starting at
         // the drawn muzzle and placed and scaled by their height like everything else.
         if (Guns.ShowMapTracers)

@@ -69,7 +69,19 @@ public sealed class Guns
     private const float DragK = 0.00024f;
     private const float LifeS = 1.6f;                     // rounds are dropped after this (well past 1000 yd)
     private const float SpreadRad = 0.0035f;              // each gun's dispersion either way, about 3.5 mils
-    private const float TracerStreakS = 0.05f;            // how much of its flight a tracer's glow streak covers
+    private const float TracerStreakS = 0.028f;           // how much of its flight a tracer's streak covers: about what the eye smears, 60 ft or so
+    private const float IgniteS = 0.05f, FullBrightS = 0.12f; // a tracer ignites a little way down the range, not at the muzzle, and rises to full
+    private const float BurnoutS = 1.05f, DarkS = 1.5f;       // then burns steadily and fades out as its compound is used up
+
+    /// <summary>How brightly a tracer round burns at this age (seconds in flight), 0 to 1: dark at the muzzle, igniting
+    /// after about 100 ft, steady, then dying away toward the end of its flight.</summary>
+    public static float TracerGlow(float age)
+    {
+        if (age <= IgniteS) return 0f;
+        if (age < FullBrightS) return (age - IgniteS) / (FullBrightS - IgniteS);
+        if (age < BurnoutS) return 1f;
+        return MathF.Max(0f, 1f - (age - BurnoutS) / (DarkS - BurnoutS));
+    }
 
     /// <summary>Per-round damage scale, against the hit boxes' values, until damage uses calibre and mass. The boxes
     /// were tuned for one round in twelve a second; eight guns fire about 150.</summary>
@@ -179,7 +191,10 @@ public sealed class Guns
         into.Clear();
         if (!ShowEffects && !ShowSightTracers) return;
         foreach (var r in Rounds)
-            if (r.Tracer)
-                into.Add(new Gunsight.Tracer { A = r.Pos - r.Vel * TracerStreakS, B = r.Pos, Life = 1 });
+        {
+            var glow = TracerGlow(r.Age);
+            if (r.Tracer && glow > 0.01f)
+                into.Add(new Gunsight.Tracer { A = r.Pos - r.Vel * TracerStreakS, B = r.Pos, Life = 1, Glow = glow });
+        }
     }
 }

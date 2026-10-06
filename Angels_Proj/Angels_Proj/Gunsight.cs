@@ -15,7 +15,7 @@ namespace Angels_Proj;
 /// </summary>
 public sealed class Gunsight
 {
-    public struct Tracer { public Vector3 A, B; public int Life; }
+    public struct Tracer { public Vector3 A, B; public int Life; public float Glow; }
 
     private const float HFovDeg = 18f, SkyRadius = 900_000f; // square view, so 18 degrees each way: the reticle's worth
 
@@ -477,24 +477,32 @@ public sealed class Gunsight
             _blendLines.Add(Vtx(dl.A - camPos, col)); _blendLines.Add(Vtx(dl.B - camPos, col));
         }
 
-        // Tracers: each a streak, a ribbon turned to face the camera so it reads at any range. Pure red, a soft halo
-        // under a thin core. The width is in feet, so a round close by is fat and a far one a fine line.
-        var haze = Premul(new Vector3(1f, 0f, 0f), 0.4f);
-        var core = Premul(new Vector3(1f, 0f, 0f), 1f);
+        // Tracers: a burning streak, white-hot at the head fading through red to nothing at the tail, a ribbon turned to
+        // face the camera. Sized in screen pixels (a core a pixel or two wide with a soft red halo) so it stays a fine
+        // line at any range, but never fatter than a round really is up close.
+        var tanH = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
+        var ftPerPx = 2f * tanH / MathF.Max(1f, _final.Width);   // feet across one pixel, per foot of range
         foreach (var tr in tracers)
         {
             Vector3 a = tr.A - camPos, b = tr.B - camPos, dir = b - a, mid = (a + b) * 0.5f;
             var side = Vector3.Cross(dir, mid);
             if (side.LengthSquared() < 1e-6f) continue; // coming straight at the camera: nothing to show
             side.Normalize();
-            void Ribbon(float half, Color c)
+            var range = MathF.Max(mid.Length(), 20f);
+            var px = ftPerPx * range;                     // feet per pixel at this range
+            var g = tr.Glow;
+            void Ribbon(float halfHead, float halfTail, Color head, Color tail)
             {
-                Vector3 p0 = a - side * half, p1 = a + side * half, p2 = b + side * half, p3 = b - side * half;
-                _blend.Add(Vtx(p0, c)); _blend.Add(Vtx(p1, c)); _blend.Add(Vtx(p2, c));
-                _blend.Add(Vtx(p0, c)); _blend.Add(Vtx(p2, c)); _blend.Add(Vtx(p3, c));
+                Vector3 p0 = a - side * halfTail, p1 = a + side * halfTail, p2 = b + side * halfHead, p3 = b - side * halfHead;
+                _blend.Add(Vtx(p0, tail)); _blend.Add(Vtx(p1, tail)); _blend.Add(Vtx(p2, head));
+                _blend.Add(Vtx(p0, tail)); _blend.Add(Vtx(p2, head)); _blend.Add(Vtx(p3, head));
             }
-            Ribbon(1.3f, haze);
-            Ribbon(0.45f, core);
+            // Halo: red, about three pixels across at the head (but no more than a foot wide), tapering to the tail.
+            var haloHalf = MathF.Min(1.5f * px, 0.5f);
+            Ribbon(haloHalf, haloHalf * 0.3f, Premul(new Vector3(1f, 0.1f, 0.04f), 0.5f * g), Premul(new Vector3(1f, 0.05f, 0f), 0f));
+            // Core: a pixel or so wide, white-hot at the head, red where it trails.
+            var coreHalf = MathF.Min(0.6f * px, 0.2f);
+            Ribbon(coreHalf, coreHalf * 0.35f, Premul(new Vector3(1f, 0.92f, 0.85f), g), Premul(new Vector3(1f, 0.15f, 0.05f), 0.55f * g));
         }
     }
 
