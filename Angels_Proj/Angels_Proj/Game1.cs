@@ -79,6 +79,8 @@ public class Game1 : Game
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
+    private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
+    private float _lastPointBearing, _lastPointElev;
     private Traffic.Plane _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
     private Traffic.Plane _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
@@ -233,7 +235,7 @@ public class Game1 : Game
     }
 
     /// <summary>The plane the mouse is over on the map that is also inside the sight's view (nearest to the pointer), if any.</summary>
-    private Traffic.Plane PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect)
+    private Traffic.Plane PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect, bool needSight = true)
     {
         var vp = GraphicsDevice.Viewport;
         var centre = new Vector2(vp.Width / 2f, vp.Height / 2f);
@@ -245,7 +247,7 @@ public class Game1 : Game
         {
             var f = DistFactor(p.Altitude);
             if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt || p.State != Traffic.State.Flying) continue;
-            if (!Gunsight.Sees(World.ToFt(p.Pos, p.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)) continue;
+            if (needSight && !Gunsight.Sees(World.ToFt(p.Pos, p.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)) continue;
             var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
             var d = Vector2.Distance(screen, mouse);
             var radius = Math.Max(40f * ps / f, 16f * s); // about the sprite's half-span, never tiny
@@ -433,6 +435,30 @@ public class Game1 : Game
         else _lastAimed = null;
         _fm.Aiming = target;
 
+        // Pointing assist: hovering over a plane the sight can't see yet (say 45 degrees off the nose) points the
+        // plane at it, banking toward its bearing and pitching to its elevation, both a little ahead along its
+        // motion, until it swings into the sight and the aimer above takes over.
+        Traffic.Plane pointAt = null;
+        float pointBearing = 0f, pointElevDeg = 0f;
+        if (!target && _phase == Phase.Flying)
+            pointAt = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect, needSight: false);
+        if (pointAt != null)
+        {
+            var rel = World.ToFt(pointAt.Pos, pointAt.Altitude) - camFt;
+            var bearing = MathF.Atan2(rel.X, -rel.Z);
+            var elev = MathF.Atan2(rel.Y, MathF.Sqrt(rel.X * rel.X + rel.Z * rel.Z));
+            float bearingRate = 0f, elevRate = 0f;
+            if (_lastPointed == pointAt)
+            {
+                bearingRate = MathHelper.WrapAngle(bearing - _lastPointBearing);
+                elevRate = elev - _lastPointElev;
+            }
+            _lastPointed = pointAt; _lastPointBearing = bearing; _lastPointElev = elev;
+            pointBearing = bearing + bearingRate * AimLeadTicks;
+            pointElevDeg = MathHelper.ToDegrees(elev + elevRate * AimLeadTicks);
+        }
+        else _lastPointed = null;
+
         // Mouse aim: while the aimer is up the pointer disappears and the mouse moves the aim point instead,
         // left/right swinging the heading the assist rolls toward, up/down the pitch. Each tick the pointer is put
         // back in the middle so only its movement counts. Losing the target from the sight drops the aimer and
@@ -498,12 +524,19 @@ public class Game1 : Game
         _lastMiddle = middle;
 
         // Bank toward the cursor's bearing; level out inside the deadzone. While aiming, bank toward the target
-        // instead, offset by the mouse aim.
+        // instead, offset by the mouse aim; while pointing, bank toward the hovered plane. Pointing also pitches
+        // the nose to it, unless W/S is held.
         var targetBank = 0f;
         if (target)
         {
             var err = MathHelper.WrapAngle(aimBearing + _aimYaw - _fm.Heading);
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
+        }
+        else if (pointAt != null)
+        {
+            var err = MathHelper.WrapAngle(pointBearing - _fm.Heading);
+            targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
+            if (pitchKey == 0f) _fm.PointPitch(pointElevDeg);
         }
         else if (d.Length() > DeadzonePx)
         {

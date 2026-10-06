@@ -142,6 +142,15 @@ public sealed class FlightModel
     /// <summary>Mouse aim while the aimer is up: move the pitch trim by this many degrees.</summary>
     public void AimTrimBy(float deg) => AimTrimDeg = MathHelper.Clamp(AimTrimDeg + deg, -AimTrimMaxDeg, AimTrimMaxDeg);
 
+    /// <summary>Pointing assist: swing the nose to this flight-path angle the way the wheel does (eased, then held),
+    /// within the climb and dive limits.</summary>
+    public void PointPitch(float deg)
+    {
+        PitchCmdDeg = MathHelper.Clamp(deg, -MaxDiveDeg, MaxClimbDeg);
+        _wheelSteered = true;
+        _pitchHeld = false;
+    }
+
     /// <summary>Middle click: swing the nose back to level.</summary>
     public void WheelLevel()
     {
