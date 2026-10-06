@@ -39,6 +39,9 @@ public class Game1 : Game
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
     // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
+    private const float PanGain = 1.6f;          // screen px of pan per px of mouse movement
+    private const float PanMarginPx = 45f;       // how close the plane may get to a screen edge when panning (720p px)
+    private const float PanReturn = 0.88f;       // pan left each tick once the button is released: it eases back to centre
     private const float ExitPointerPx = 180f;    // where the pointer is put when the aimer drops: this far from the centre along the heading (720p px)
     private const int ExitHoldTicks = 8;
     private const float AimMaxStepPx = 80f;      // a tick's mouse movement beyond this is a glitch, not aiming
@@ -82,6 +85,10 @@ public class Game1 : Game
     private readonly Guns _guns;
     private int _assistTicks;                    // ticks left of the assist flying onto the target
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
+    private Vector2 _pan;                       // camera pan, screen px: the plane sits this far from the screen centre the other way
+    private bool _panning;                       // right button held: the mouse pans the camera
+    private Point _panStart, _panPrev;           // the pointer when the pan began (steering is held on it), and its last reading
+    private int _panSkip;                        // readings to ignore after the game has moved the pointer
     private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
@@ -176,11 +183,19 @@ public class Game1 : Game
 
     private float Zoom => ZoomAt(0f);
 
+    /// <summary>Where the plane is on screen: the centre, shifted the other way from the camera pan.</summary>
+    private Vector2 PlaneScreen()
+    {
+        var vp = GraphicsDevice.Viewport;
+        return new Vector2(vp.Width / 2f, vp.Height / 2f) - _pan;
+    }
+
     private void Reset()
     {
         _fm = new FlightModel { VerticalRateScale = _arcade ? 2f : 1f };
         _phase = Phase.Flying;
         _particles.Clear();
+        _pan = Vector2.Zero;
         _guns.Rearm();
         _reason = "";
         _phaseTime = 0f;
@@ -250,8 +265,7 @@ public class Game1 : Game
     /// <summary>The plane the mouse is over on the map that is also inside the sight's view (nearest to the pointer), if any.</summary>
     private Traffic.Plane PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect, bool needSight = true)
     {
-        var vp = GraphicsDevice.Viewport;
-        var centre = new Vector2(vp.Width / 2f, vp.Height / 2f);
+        var centre = PlaneScreen();
         Traffic.Plane best = null;
         var bestD = float.MaxValue;
         var zones = new System.Collections.Generic.List<(Vector2[] poly, float damage)>();
@@ -438,7 +452,58 @@ public class Game1 : Game
         if (Pressed(Keys.R)) Reset();
 
         var vp = GraphicsDevice.Viewport;
-        var d = new Vector2(m.X - vp.Width / 2f, m.Y - vp.Height / 2f);
+
+        // Camera pan: holding the right button, mouse movement pans the camera (forward pans north, and so on), up to the
+        // point where the plane reaches the edge of the screen. The pointer is hidden and steering is held on where the
+        // pointer was when the pan began; letting go puts the pointer back there and the camera eases back to the plane.
+        // Like mouse aim, only the movement since the last reading counts and the pointer is recentred near an edge.
+        var rightDown = m.RightButton == ButtonState.Pressed;
+        if (rightDown && _phase == Phase.Flying && !_mouseAim)
+        {
+            var now = new Point(m.X, m.Y);
+            if (!_panning)
+            {
+                _panning = true;
+                _panStart = _panPrev = now;
+                _panSkip = 0;
+                IsMouseVisible = false;
+            }
+            else if (IsActive)
+            {
+                if (_panSkip > 0) _panSkip--;
+                else
+                {
+                    float dx = MathHelper.Clamp(now.X - _panPrev.X, -AimMaxStepPx, AimMaxStepPx);
+                    float dy = MathHelper.Clamp(now.Y - _panPrev.Y, -AimMaxStepPx, AimMaxStepPx);
+                    _pan += new Vector2(dx, dy) * PanGain;
+                }
+                _panPrev = now;
+                if (now.X < vp.Width / 5 || now.X > vp.Width * 4 / 5 || now.Y < vp.Height / 5 || now.Y > vp.Height * 4 / 5)
+                {
+                    Mouse.SetPosition(vp.Width / 2, vp.Height / 2);
+                    _panSkip = AimWarpSkipTicks;
+                }
+            }
+        }
+        else
+        {
+            if (_panning)
+            {
+                _panning = false;
+                IsMouseVisible = true;
+                if (IsActive) Mouse.SetPosition(_panStart.X, _panStart.Y);
+            }
+            _pan *= PanReturn;
+            if (_pan.LengthSquared() < 0.25f) _pan = Vector2.Zero;
+        }
+        // The plane must stay on screen.
+        var panMargin = PanMarginPx * Scale;
+        _pan.X = MathHelper.Clamp(_pan.X, -(vp.Width / 2f - panMargin), vp.Width / 2f - panMargin);
+        _pan.Y = MathHelper.Clamp(_pan.Y, -(vp.Height / 2f - panMargin), vp.Height / 2f - panMargin);
+
+        // The pointer for steering and hovering: while panning, where it was when the pan began.
+        var mouseP = _panning ? new Vector2(_panStart.X, _panStart.Y) : new Vector2(m.X, m.Y);
+        var d = mouseP - PlaneScreen();
         _phaseTime += 1f / 60f;
 
         // Particles run in every phase.
@@ -470,12 +535,12 @@ public class Game1 : Game
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
-        _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect, needSight: false);
+        _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(mouseP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
-        if (_hovered != null) SpriteZones(_hovered, new Vector2(vp.Width / 2f, vp.Height / 2f), _hoverZones);
+        if (_hovered != null) SpriteZones(_hovered, PlaneScreen(), _hoverZones);
         if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) || _tracked.State != Traffic.State.Flying ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
-            _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
+            _tracked = PlaneAimedAt(mouseP, camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
         // Aim assist: getting the aimer up is the objective. For the first second and a half the game flies the plane,
         // rolling and pitching onto the target (aimed a little ahead along its motion) to steady you on it. Then it
@@ -517,7 +582,7 @@ public class Game1 : Game
         Traffic.Plane pointAt = null;
         float pointBearing = 0f, pointElevDeg = 0f;
         if (!target && _phase == Phase.Flying)
-            pointAt = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect, needSight: false);
+            pointAt = PlaneAimedAt(mouseP, camFt, sr, su, sf, aspect, needSight: false);
         _pointDwell = pointAt != null && pointAt == _lastPointed ? _pointDwell + 1 : 0;
         if (pointAt != null && _pointDwell < PointDwellTicks)
         {
@@ -591,7 +656,7 @@ public class Game1 : Game
             _mouseAim = false;
             IsMouseVisible = true;
             var hdg = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
-            var exit = new Vector2(vp.Width / 2f, vp.Height / 2f) + hdg * ExitPointerPx * Scale;
+            var exit = PlaneScreen() + hdg * ExitPointerPx * Scale;
             exit = Vector2.Clamp(exit, new Vector2(8f, 8f), new Vector2(vp.Width - 8f, vp.Height - 8f));
             if (IsActive) Mouse.SetPosition((int)exit.X, (int)exit.Y);
             _exitHold = ExitHoldTicks;
@@ -685,7 +750,7 @@ public class Game1 : Game
     {
         var vp = GraphicsDevice.Viewport;
         float w = vp.Width, h = vp.Height, s = Scale, z = Zoom;
-        var centre = new Vector2(w / 2f, h / 2f);
+        var centre = PlaneScreen();
 
         // The gunsight's 3D view goes into its own render target before anything is drawn to the screen.
         var sightRect = Instruments.GunsightRect(vp.Bounds, s);
@@ -957,7 +1022,7 @@ public class Game1 : Game
         {
             var vw = w / z; var vh = h / z;
             _sb.Draw(_grass, new Rectangle(0, 0, (int)w, (int)h),
-                new Rectangle((int)MathF.Floor(_pos.X - vw / 2f), (int)MathF.Floor(_pos.Y - vh / 2f), (int)vw, (int)vh),
+                new Rectangle((int)MathF.Floor(_pos.X + _pan.X / z - vw / 2f), (int)MathF.Floor(_pos.Y + _pan.Y / z - vh / 2f), (int)vw, (int)vh),
                 Color.White * grassA);
         }
         _sb.End();
@@ -966,8 +1031,10 @@ public class Game1 : Game
         _sb.Begin(samplerState: SamplerState.LinearClamp);
         var halfW = w / z / 2f + Cell;
         var halfH = h / z / 2f + Cell;
-        int cx0 = (int)MathF.Floor((_pos.X - halfW) / Cell), cx1 = (int)MathF.Floor((_pos.X + halfW) / Cell);
-        int cy0 = (int)MathF.Floor((_pos.Y - halfH) / Cell), cy1 = (int)MathF.Floor((_pos.Y + halfH) / Cell);
+        // The view's centre in the world is the plane's position moved by the pan.
+        var viewC = _pos + _pan / z;
+        int cx0 = (int)MathF.Floor((viewC.X - halfW) / Cell), cx1 = (int)MathF.Floor((viewC.X + halfW) / Cell);
+        int cy0 = (int)MathF.Floor((viewC.Y - halfH) / Cell), cy1 = (int)MathF.Floor((viewC.Y + halfH) / Cell);
         for (var cy = cy0; cy <= cy1; cy++)
             for (var cx = cx0; cx <= cx1; cx++)
             {
@@ -1085,8 +1152,8 @@ public class Game1 : Game
             // The deepest part of the slice is the furthest away, so it has the smallest zoom and the widest view.
             var fFar = MathF.Max(DistFactor(slice * CloudField.SliceFt), 0.2f);
             var zMin = MathF.Min(Scale * GroundZoom / fFar, zGround);
-            var halfW = w / zMin / 2f + CloudField.Cell + 1000f;
-            var halfH = h / zMin / 2f + CloudField.Cell + 1000f;
+            var halfW = w / zMin / 2f + CloudField.Cell + 1000f + MathF.Abs(_pan.X) / zMin;   // the pan moves the view's centre
+            var halfH = h / zMin / 2f + CloudField.Cell + 1000f + MathF.Abs(_pan.Y) / zMin;
             int cx0 = (int)MathF.Floor((_pos.X - halfW) / CloudField.Cell), cx1 = (int)MathF.Floor((_pos.X + halfW) / CloudField.Cell);
             int cy0 = (int)MathF.Floor((_pos.Y - halfH) / CloudField.Cell), cy1 = (int)MathF.Floor((_pos.Y + halfH) / CloudField.Cell);
             for (var cy = cy0; cy <= cy1; cy++)
