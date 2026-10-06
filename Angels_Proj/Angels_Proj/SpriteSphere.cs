@@ -31,10 +31,10 @@ public sealed class SpriteSphere
     public const float MapScale = 92f / SpanPx;
 
     /// <summary>Where azimuth 0 is: the angle of the camera round the plane in the frames, in degrees, taken from the nose and
-    /// counted anticlockwise seen from above. The sheet's notes say frame 0 is nose-on (0), but the views as rendered start
-    /// at the plane's right side and reach nose-on at azimuth 90 (-90). If the sheet is rendered again with the nose at
-    /// azimuth 0, set this to 0.</summary>
-    private const float AzZeroDeg = -90f;
+    /// counted anticlockwise seen from above. In the current sheet azimuth 0 is nose-on, 90 the plane's left side and 180
+    /// tail-on, so the frames cover its whole length and the missing right side is the left flipped. (The first render
+    /// began at the right side, -90, and had no tail views.)</summary>
+    private const float AzZeroDeg = 0f;
 
     public readonly Texture2D Sheet;
 
