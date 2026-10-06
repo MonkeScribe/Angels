@@ -88,6 +88,8 @@ public class Game1 : Game
     private Vector2 _pan;                       // camera pan, screen px: the plane sits this far from the screen centre the other way
     private bool _panning;                       // right button held: the mouse pans the camera
     private Point _panStart, _panPrev;           // the pointer when the pan began (steering is held on it), and its last reading
+    private Vector2 _panLockedD;                // pointer minus plane at the start of the pan: the steering held while panning
+    private float _panReleaseLen;                // how far the camera was panned when the button was let go
     private int _panSkip;                        // readings to ignore after the game has moved the pointer
     private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
@@ -466,6 +468,9 @@ public class Game1 : Game
                 _panning = true;
                 _panStart = _panPrev = now;
                 _panSkip = 0;
+                // Steering is locked as a direction: the pointer's bearing from the plane as it is now, held as it is
+                // whatever the camera does, so the plane keeps flying the same way.
+                _panLockedD = new Vector2(now.X, now.Y) - PlaneScreen();
                 IsMouseVisible = false;
             }
             else if (IsActive)
@@ -490,6 +495,7 @@ public class Game1 : Game
             if (_panning)
             {
                 _panning = false;
+                _panReleaseLen = MathF.Max(_pan.Length(), 1f);
                 IsMouseVisible = true;
                 if (IsActive) Mouse.SetPosition(_panStart.X, _panStart.Y);
             }
@@ -503,7 +509,21 @@ public class Game1 : Game
 
         // The pointer for steering and hovering: while panning, where it was when the pan began.
         var mouseP = _panning ? new Vector2(_panStart.X, _panStart.Y) : new Vector2(m.X, m.Y);
+        // Steering: while panning, the direction locked when the pan began, so the plane flies on whichever way it was
+        // going (look behind and it doesn't turn). Once released, as the camera eases back the direction follows the
+        // pointer, which never moved, blending from the locked direction as the plane's screen position returns.
         var d = mouseP - PlaneScreen();
+        if (_panning) d = _panLockedD;
+        else if (_pan != Vector2.Zero && _panReleaseLen > 0f)
+        {
+            var t = MathHelper.Clamp(_pan.Length() / _panReleaseLen, 0f, 1f);   // 1 at the moment of release, 0 when the camera is home
+            float locked = MathF.Atan2(_panLockedD.X, -_panLockedD.Y), live = MathF.Atan2(d.X, -d.Y);
+            var ang = locked + MathHelper.WrapAngle(live - locked) * (1f - t);
+            var len = MathHelper.Lerp(_panLockedD.Length(), d.Length(), 1f - t);
+            d = new Vector2(MathF.Sin(ang), -MathF.Cos(ang)) * len;
+        }
+        // While the camera is panned (or coming back) the pointer isn't picking targets: planes slide under it.
+        var pickP = _panning || _pan != Vector2.Zero ? new Vector2(-9999f, -9999f) : mouseP;
         _phaseTime += 1f / 60f;
 
         // Particles run in every phase.
@@ -535,12 +555,12 @@ public class Game1 : Game
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
-        _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(mouseP, camFt, sr, su, sf, aspect, needSight: false);
+        _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
         if (_hovered != null) SpriteZones(_hovered, PlaneScreen(), _hoverZones);
         if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) || _tracked.State != Traffic.State.Flying ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
-            _tracked = PlaneAimedAt(mouseP, camFt, sr, su, sf, aspect);
+            _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
         // Aim assist: getting the aimer up is the objective. For the first second and a half the game flies the plane,
         // rolling and pitching onto the target (aimed a little ahead along its motion) to steady you on it. Then it
@@ -582,7 +602,7 @@ public class Game1 : Game
         Traffic.Plane pointAt = null;
         float pointBearing = 0f, pointElevDeg = 0f;
         if (!target && _phase == Phase.Flying)
-            pointAt = PlaneAimedAt(mouseP, camFt, sr, su, sf, aspect, needSight: false);
+            pointAt = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _pointDwell = pointAt != null && pointAt == _lastPointed ? _pointDwell + 1 : 0;
         if (pointAt != null && _pointDwell < PointDwellTicks)
         {
