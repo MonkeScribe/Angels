@@ -271,6 +271,78 @@ public sealed class Spitfire
         sb.Draw(_views[_view], pos, null, color, heading, Origin, scale, SpriteEffects.None, 0f);
     }
 
+    // ---- Drawn from the sprite sphere: the picture for the angle we are seen from, with the propeller placed on it. ----
+
+    // The propeller hub in the sphere's frames, in feet from the middle of a frame (x nose, y left, z up), and the prop's size.
+    private static readonly Vector3 SphereHub = new(14.6f, 0f, -1.25f);
+    private const float SphereSpinnerFt = 1.0f, SphereBladeFt = 5.45f, SphereBladeWidthPx = 2.3f;
+
+    /// <summary>Draws the plane from the sprite sphere. view is the sphere's view for where we look at it from; propBehind is
+    /// true when the nose points away from the viewer, so the airframe hides the propeller; scale is screen px per sprite px.</summary>
+    public void DrawSphere(SpriteBatch sb, SpriteSphere sphere, SpriteSphere.View view, bool propBehind, Vector2 pos, float scale, Color tint)
+    {
+        var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
+        if (propBehind) DrawSpherePropeller(sb, view, pos, scale);
+        sb.Draw(sphere.Sheet, pos, view.Src, tint, view.Roll, new Vector2(SpriteSphere.Frame / 2f), scale, flip, 0f);
+        if (!propBehind) DrawSpherePropeller(sb, view, pos, scale);
+    }
+
+    /// <summary>Just the silhouette of the sphere's view, for the shadow on the ground.</summary>
+    public static void DrawSphereShadow(SpriteBatch sb, SpriteSphere sphere, SpriteSphere.View view, Vector2 pos, float scale, Color color)
+    {
+        var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
+        sb.Draw(sphere.Sheet, pos, view.Src, color, view.Roll, new Vector2(SpriteSphere.Frame / 2f), scale, flip, 0f);
+    }
+
+    /// <summary>The propeller as in DrawPropeller, but the disc is placed in the plane's own frame and seen from wherever the
+    /// picture is taken, so it is a line edge-on, an ellipse as the nose turns toward or away from us, and tips with the bank.</summary>
+    private void DrawSpherePropeller(SpriteBatch sb, SpriteSphere.View view, Vector2 pos, float scale)
+    {
+        var hub = pos + view.Project(SphereHub) * scale;
+        var spinnerPx = SphereSpinnerFt * SpriteSphere.PxPerFt;
+        var width = MathF.Max(1f, SphereBladeWidthPx * scale);
+        // A point on the disc at angle a (0 = toward the right wing, 90 degrees = straight up), as sprite px from the hub.
+        Vector2 Disc(float a, float ft) => view.Project(new Vector3(0f, -MathF.Cos(a), MathF.Sin(a)) * ft);
+        void Line(Vector2 a, Vector2 b, Color color)
+        {
+            var d = b - a;
+            var len = d.Length();
+            if (len < 0.25f) return;
+            sb.Draw(_pixel, (a + b) / 2f, null, color, MathF.Atan2(d.Y, d.X), new Vector2(0.5f, 0.5f), new Vector2(len, width), SpriteEffects.None, 0f);
+        }
+
+        var blur = MathHelper.Clamp(_propRate / FullSpin, 0f, 1f) * BlurMax;
+        if (blur > 0.01f)
+            for (var side = 0; side < 2; side++)
+            {
+                var reach = Disc(side * MathF.PI, SphereBladeFt);
+                var len = reach.Length();
+                if (len <= spinnerPx) continue;
+                var dir = reach / len;
+                Line(hub + dir * spinnerPx * scale, hub + reach * scale, BlurColor * blur);
+            }
+
+        var alpha = MathHelper.Clamp(1.6f / SmearSamples, 0f, 1f);
+        for (var k = 0; k < SmearSamples; k++)
+        {
+            var a0 = _propAngle + _propRate * Shutter * k / SmearSamples;
+            for (var b = 0; b < Blades; b++)
+            {
+                var a = a0 + b * MathF.Tau / Blades;
+                var up = MathF.Sin(a);                       // the blade facing the sky is lit and over the spinner
+                var reach = Disc(a, SphereBladeFt);
+                var length = reach.Length();
+                var start = up > 0f ? 0f : spinnerPx;
+                if (length <= start) continue;               // hidden under the spinner
+                var dir = reach / length;
+                var tipStart = MathF.Max(start, length * (1f - TipFrac));
+                var shade = Color.Lerp(BladeColor, BladeLit, (up + 1f) / 2f);
+                Line(hub + dir * start * scale, hub + dir * tipStart * scale, shade * alpha);
+                Line(hub + dir * tipStart * scale, hub + dir * length * scale, TipColor * alpha);
+            }
+        }
+    }
+
     private Vector2 ToScreen(Vector2 sprite, Vector2 pos, float heading, Vector2 scale)
     {
         var v = (sprite - Origin) * scale;

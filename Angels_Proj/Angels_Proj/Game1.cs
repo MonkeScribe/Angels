@@ -98,6 +98,7 @@ public class Game1 : Game
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
     private Traffic.Plane _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
     private readonly System.Collections.Generic.List<(Vector2[] poly, float damage)> _hoverZones = new();
+    private bool _sphereSprite = true;           // debug menu: the player's plane from the sprite sphere (off: the old pitch views)
     private bool _showHitboxes;                 // debug menu: draw the planes' hit boxes on the map and in the sight
     private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, float damage)> _boxEdges = new();
     private bool _mouseAim;                      // the pointer is captured for mouse aim
@@ -328,6 +329,15 @@ public class Game1 : Game
         return true;
     }
 
+    /// <summary>The player's view in the sprite sphere for the map, which looks straight down with north at the top, and whether
+    /// the nose points away from us so that the airframe hides the propeller.</summary>
+    private SpriteSphere.View PlayerView(out bool propBehind)
+    {
+        World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
+        propBehind = f.Y < -0.1f;
+        return _sphere.Pick(Vector3.UnitY, -Vector3.UnitZ, f, r, u);
+    }
+
     /// <summary>One tick with the trigger held: every gun fires its share of rounds, each leaving at muzzle velocity
     /// plus the plane's own velocity, and each wing that fired flashes.</summary>
     private void Fire()
@@ -341,8 +351,18 @@ public class Game1 : Game
         var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale / GroundZoom;
         float ch = MathF.Cos(_fm.Heading), sh = MathF.Sin(_fm.Heading), bankSq = MathF.Cos(_fm.Bank * 0.6f);
         var mapMuzzles = new Vector2[Guns.GunCount];
+        var view = PlayerView(out _);
+        var kws = kw / Spitfire.ArtScale * SpriteSphere.MapScale;   // world px per px of the sphere's sprite
         for (var g = 0; g < Guns.GunCount; g++)
         {
+            if (_sphereSprite)
+            {
+                // The muzzle in the sphere's frame (x nose, y left, z up; its centre is a little ahead of the plane's origin
+                // and above the nose's axis), put where the picture shows it.
+                var m = Guns.Muzzles[g];
+                mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z + 0.7f, -m.X, m.Y - 1.25f)) * kws;
+                continue;
+            }
             var sp = Guns.MuzzleSpritePx[g] - Spitfire.Origin;
             var off = new Vector2(sp.X * bankSq, sp.Y) * kw;
             mapMuzzles[g] = _pos + new Vector2(off.X * ch - off.Y * sh, off.X * sh + off.Y * ch);
@@ -372,7 +392,7 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "SPAWN TARGETS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "PLAYER SPRITE", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
@@ -380,6 +400,7 @@ public class Game1 : Game
         1 => _cloudsOn ? "ON" : "OFF",
         2 => _hudBars ? "ON" : "OFF",
         3 => _showHitboxes ? "ON" : "OFF",
+        4 => _sphereSprite ? "3D VIEWS" : "OLD",
         _ => "",
     };
 
@@ -394,7 +415,8 @@ public class Game1 : Game
             case 1: _cloudsOn = !_cloudsOn; break;
             case 2: _hudBars = !_hudBars; break;
             case 3: _showHitboxes = !_showHitboxes; break;
-            case 4:
+            case 4: _sphereSprite = !_sphereSprite; break;
+            case 5:
                 _traffic.SpawnAhead(_pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
@@ -850,11 +872,22 @@ public class Game1 : Game
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
             var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
-            _spitfire.DrawShadow(_sb, centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s, _fm.Heading, new Vector2(ps * 0.9f), _fm.Gamma,
-                new Color(0, 0, 0, 80) * vis);
-            // Narrow the wingspan slightly when banked for a hint of tilt.
-            var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps; // the pitch views are already foreshortened
-            _spitfire.Draw(_sb, centre, _fm.Heading, squash, _fm.Gamma, Color.White);
+            var shadowAt = centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s;
+            if (_sphereSprite)
+            {
+                // The sprite sphere: the picture for how the plane is turned (heading, pitch and bank all show in it).
+                var view = PlayerView(out var propBehind);
+                var sc = ps / Spitfire.ArtScale * SpriteSphere.MapScale;
+                Spitfire.DrawSphereShadow(_sb, _sphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
+                _spitfire.DrawSphere(_sb, _sphere, view, propBehind, centre, sc, Color.White);
+            }
+            else
+            {
+                _spitfire.DrawShadow(_sb, shadowAt, _fm.Heading, new Vector2(ps * 0.9f), _fm.Gamma, new Color(0, 0, 0, 80) * vis);
+                // Narrow the wingspan slightly when banked for a hint of tilt.
+                var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps; // the pitch views are already foreshortened
+                _spitfire.Draw(_sb, centre, _fm.Heading, squash, _fm.Gamma, Color.White);
+            }
         }
         else
         {

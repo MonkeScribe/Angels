@@ -26,6 +26,7 @@ public sealed class SpriteSphere
     /// SpanFt feet. So a frame covers FrameFt feet across.</summary>
     public const float SpanPx = 234f, SpanFt = 37.2f;
     public const float FrameFt = Frame * SpanFt / SpanPx;
+    public const float PxPerFt = SpanPx / SpanFt;
 
     /// <summary>Scale that draws a frame on the map at the size the old 96 px plane had (92 px wingspan at scale 1).</summary>
     public const float MapScale = 92f / SpanPx;
@@ -56,7 +57,21 @@ public sealed class SpriteSphere
         public readonly Rectangle Src;       // the frame on the sheet
         public readonly bool Flip;           // draw it flipped left to right
         public readonly float Roll;          // turn it this far, clockwise on screen, radians
-        public View(Rectangle src, bool flip, float roll) { Src = src; Flip = flip; Roll = roll; }
+        private readonly Vector3 _right, _up; // the picture's right and up, in the plane's own frame
+        public View(Rectangle src, bool flip, float roll, Vector3 right, Vector3 up)
+        {
+            Src = src; Flip = flip; Roll = roll; _right = right; _up = up;
+        }
+
+        /// <summary>Where a point of the plane lands on screen, as sprite px (x right, y down) from the plane's centre, for a
+        /// point given in feet in the plane's own frame (x nose, y left, z up). It follows the frame as it is drawn, flip
+        /// and roll included, so things drawn on the plane (the propeller) sit on the picture.</summary>
+        public Vector2 Project(Vector3 body)
+        {
+            float x = Vector3.Dot(body, _right) * PxPerFt, y = Vector3.Dot(body, _up) * PxPerFt;   // y up in the picture
+            float c = MathF.Cos(Roll), s = MathF.Sin(Roll);
+            return new Vector2(x * c + y * s, x * s - y * c);
+        }
     }
 
     private readonly List<Cand> _views = new();
@@ -117,6 +132,6 @@ public sealed class SpriteSphere
             if (score >= bestScore) continue;
             best = v; bestRoll = roll; bestScore = score;
         }
-        return new View(best.Src, best.Flip, bestRoll);
+        return new View(best.Src, best.Flip, bestRoll, best.R, best.U);
     }
 }
