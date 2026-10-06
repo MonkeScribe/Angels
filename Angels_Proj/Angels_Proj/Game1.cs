@@ -34,7 +34,7 @@ public class Game1 : Game
     // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
-    private const int AssistTicks = 30;          // the assist flies onto the target for this long (half a second), then lets go
+    private const int AssistTicks = 90;          // the assist flies onto the target for this long (a second and a half), then lets go
     private const int PointDwellTicks = 60;      // the mouse must stay on a plane this long (a second) before pointing starts
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
@@ -404,7 +404,7 @@ public class Game1 : Game
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
-        // Aim assist: getting the aimer up is the objective. For the first half second the game flies the plane,
+        // Aim assist: getting the aimer up is the objective. For the first second and a half the game flies the plane,
         // rolling and pitching onto the target (aimed a little ahead along its motion) to steady you on it. Then it
         // lets go: the aim point stays where the assist left it and only the player moves it, with the mouse
         // (below), the wheel and W/S.
