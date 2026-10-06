@@ -35,7 +35,7 @@ public class Game1 : Game
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
     private const int AssistTicks = 90;          // the assist flies onto the target for this long (a second and a half), then lets go
-    private const int PointDwellTicks = 60;      // the mouse must stay on a plane this long (a second) before pointing starts
+    private const int PointDwellTicks = 30;      // the mouse must stay on a plane this long (half a second) before pointing starts
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
     // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
@@ -499,8 +499,8 @@ public class Game1 : Game
         else _lastAimed = null;
         _fm.Aiming = target;
 
-        // Pointing assist: resting the mouse on a plane the sight can't see yet (say 45 degrees off the nose) for a
-        // second points the plane at it, banking toward its bearing and pitching gently to its elevation, both a
+        // Pointing assist: resting the mouse on a plane the sight can't see yet (say 45 degrees off the nose) for half
+        // a second points the plane at it, banking toward its bearing and pitching gently to its elevation, both a
         // little ahead along its motion, until it swings into the sight and the aimer above takes over. The wait
         // means brushing over a plane in passing does nothing.
         Traffic.Plane pointAt = null;
