@@ -33,6 +33,7 @@ public sealed class FlightModel
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
     private const float WheelSlewDeg = 5f;         // the wheel swings the nose this fast at most (deg per tick), ignoring the g limit
     private const float WheelEase = 0.15f;         // fraction of the gap to the command the nose closes each tick: it eases in and settles
+    private const float PointSlewDeg = 2f, PointEase = 0.06f; // the pointing assist swings the nose more gently than the wheel does
     private const float WheelLeadDeg = 25f;        // and never lets the command get further than this ahead of the nose
     private const float PitchDetentDeg = 10f;
     public const float CeilingFt = 51550f;
@@ -62,6 +63,7 @@ public sealed class FlightModel
     public float Speed;                            // true airspeed, ft/s
     public float Gamma;                            // flight path angle, rad (+ = climbing)
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
+    private bool _pointSwing;                      // the swing is the pointing assist's, so it uses the gentler rates
     private bool _wheelSteered;                    // the command came from the wheel: the nose goes straight to it and locks there
     public float Throttle = 0.55f;
     private bool _pitchHeld;
@@ -125,7 +127,7 @@ public sealed class FlightModel
         var g = MathHelper.ToDegrees(Gamma);
         float lo = MathF.Max(-MaxDiveDeg, g - WheelLeadDeg), hi = MathF.Min(MaxClimbDeg, g + WheelLeadDeg);
         PitchCmdDeg = MathHelper.Clamp(PitchCmdDeg + deg, MathF.Min(lo, hi), hi);
-        _wheelSteered = true;
+        _wheelSteered = true; _pointSwing = false;
         _pitchHeld = false;
     }
 
@@ -134,7 +136,7 @@ public sealed class FlightModel
     public void AimAcquired()
     {
         AimTrimDeg = 0f;
-        _wheelSteered = true;
+        _wheelSteered = true; _pointSwing = false;
         _pitchHeld = false;
         _keysBlocked = true;
     }
@@ -147,7 +149,7 @@ public sealed class FlightModel
     public void PointPitch(float deg)
     {
         PitchCmdDeg = MathHelper.Clamp(deg, -MaxDiveDeg, MaxClimbDeg);
-        _wheelSteered = true;
+        _wheelSteered = true; _pointSwing = true;
         _pitchHeld = false;
     }
 
@@ -156,7 +158,7 @@ public sealed class FlightModel
     {
         if (Aiming) { AimTrimDeg = 0f; return; }
         PitchCmdDeg = 0f;
-        _wheelSteered = true;
+        _wheelSteered = true; _pointSwing = false;
         _pitchHeld = false;
     }
 
@@ -183,7 +185,7 @@ public sealed class FlightModel
             // nose holds there.
             AimTrimDeg = MathHelper.Clamp(AimTrimDeg + pitchKey * AimKeyRateDeg, -AimTrimMaxDeg, AimTrimMaxDeg);
             PitchCmdDeg = MathHelper.Clamp(AimElevationDeg + AimTrimDeg, -MaxDiveDeg, MaxClimbDeg);
-            _wheelSteered = true;
+            _wheelSteered = true; _pointSwing = false;
             _pitchHeld = false;
         }
         else if (pitchKey != 0f)
@@ -233,8 +235,9 @@ public sealed class FlightModel
             // The wheel points the nose: it eases to the command, whatever the wing could pull, quickly when the gap
             // is large and gently as it closes, and locks on it. (n above still sets the drag, so a hard swing costs speed.)
             var gap = gammaTarget - Gamma;
-            var slew = MathHelper.ToRadians(WheelSlewDeg);
-            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap : MathHelper.Clamp(gap * WheelEase, -slew, slew);
+            var slew = MathHelper.ToRadians(_pointSwing ? PointSlewDeg : WheelSlewDeg);
+            var ease = _pointSwing ? PointEase : WheelEase;
+            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap : MathHelper.Clamp(gap * ease, -slew, slew);
             if (MathF.Abs(gammaTarget - Gamma) > MathHelper.ToRadians(1f)) n = gammaTarget > Gamma ? nAvail : -MathF.Min(MaxNNeg, nWing);
         }
         else Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;

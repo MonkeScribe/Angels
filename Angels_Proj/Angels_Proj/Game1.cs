@@ -35,6 +35,7 @@ public class Game1 : Game
     private const float WheelDegPerNotch = 5f;   // flight-path angle per notch (120 units)
     private const float AimDegPerNotch = 1f;     // and per notch while the aimer is up, for fine aim
     private const int AssistTicks = 30;          // the assist flies onto the target for this long (half a second), then lets go
+    private const int PointDwellTicks = 60;      // the mouse must stay on a plane this long (a second) before pointing starts
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
     // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
@@ -80,6 +81,7 @@ public class Game1 : Game
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
     private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
+    private int _pointDwell;                     // ticks the mouse has stayed on that plane
     private float _lastPointBearing, _lastPointElev;
     private Traffic.Plane _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
@@ -435,14 +437,25 @@ public class Game1 : Game
         else _lastAimed = null;
         _fm.Aiming = target;
 
-        // Pointing assist: hovering over a plane the sight can't see yet (say 45 degrees off the nose) points the
-        // plane at it, banking toward its bearing and pitching to its elevation, both a little ahead along its
-        // motion, until it swings into the sight and the aimer above takes over.
+        // Pointing assist: resting the mouse on a plane the sight can't see yet (say 45 degrees off the nose) for a
+        // second points the plane at it, banking toward its bearing and pitching gently to its elevation, both a
+        // little ahead along its motion, until it swings into the sight and the aimer above takes over. The wait
+        // means brushing over a plane in passing does nothing.
         Traffic.Plane pointAt = null;
         float pointBearing = 0f, pointElevDeg = 0f;
         if (!target && _phase == Phase.Flying)
             pointAt = PlaneAimedAt(new Vector2(m.X, m.Y), camFt, sr, su, sf, aspect, needSight: false);
-        if (pointAt != null)
+        _pointDwell = pointAt != null && pointAt == _lastPointed ? _pointDwell + 1 : 0;
+        if (pointAt != null && _pointDwell < PointDwellTicks)
+        {
+            // Still waiting: remember the plane and where it is, so its motion is known when steering starts.
+            var wrel = World.ToFt(pointAt.Pos, pointAt.Altitude) - camFt;
+            _lastPointed = pointAt;
+            _lastPointBearing = MathF.Atan2(wrel.X, -wrel.Z);
+            _lastPointElev = MathF.Atan2(wrel.Y, MathF.Sqrt(wrel.X * wrel.X + wrel.Z * wrel.Z));
+            pointAt = null;
+        }
+        else if (pointAt != null)
         {
             var rel = World.ToFt(pointAt.Pos, pointAt.Altitude) - camFt;
             var bearing = MathF.Atan2(rel.X, -rel.Z);
