@@ -78,6 +78,7 @@ public class Game1 : Game
     private readonly Guns _guns;
     private int _assistTicks;                    // ticks left of the assist flying onto the target
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
+    private Point _preAimMouse;                  // where the pointer was when mouse aim took it, to put it back after
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
     private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
@@ -481,6 +482,7 @@ public class Game1 : Game
             var mid = new Point(vp.Width / 2, vp.Height / 2);
             if (!_mouseAim)
             {
+                _preAimMouse = new Point(m.X, m.Y);
                 _mouseAim = true;
                 _aimYaw = 0f;
                 IsMouseVisible = false;
@@ -495,8 +497,11 @@ public class Game1 : Game
         }
         else if (_mouseAim)
         {
+            // Put the pointer back where it was before mouse aim took it, so the plane keeps heading the same way
+            // rather than steering for wherever the pointer was parked.
             _mouseAim = false;
             IsMouseVisible = true;
+            if (IsActive) Mouse.SetPosition(_preAimMouse.X, _preAimMouse.Y);
         }
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
