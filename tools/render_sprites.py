@@ -16,13 +16,15 @@ HOW TO USE
      If az000 is not head-on, change NOSE_YAW_OFFSET below.
  
 Nothing in your scene is changed permanently: the script makes its own
-temporary camera and sun, and puts every setting back when it's done.
+temporary camera, and puts every setting back when it's done. It leaves the
+lighting to your scene.
 """
  
 import bpy
 import math
 import os
 import json
+import shutil
 import numpy as np
 from mathutils import Euler, Vector
  
@@ -37,15 +39,23 @@ MIRROR             = True      # plane is left/right symmetric: render half, fli
 FRAME_SIZE         = 256       # pixels per frame (square)
 MARGIN             = 1.05      # 1.0 = plane just touches the frame edge at its widest angle
  
-LIGHTING           = "script"  # "script" = sun that follows the camera (consistent sprites)
-                               # "scene"  = use the lights already in your scene
-SUN_STRENGTH       = 4.0
-SUN_OFFSET_UP      = 25        # degrees the light comes from above the camera
-SUN_OFFSET_SIDE    = 30        # degrees the light comes from the side (negative = other side)
+# Lighting is not touched: the script adds no lights and hides none, so it renders with whatever lights
+# (and world) your scene already has. Set up the universal lighting in the scene itself.
  
 HIDE_DURING_RENDER = []        # parts of object names to hide, e.g. ["prop", "blade"]
 SAMPLES            = 32        # render quality (EEVEE samples)
 STANDARD_COLORS    = True      # True = colours match the textures (best for games)
+
+# ---- pixel-art / toon look (done at render time, so every frame is styled identically) ----
+TOON               = True      # hard pixel edges, black outline, banded shading, limited colours
+TOON_OUTLINE       = False     # add a 1px black outline (Freestyle). Leave False if your scene already draws outlines,
+                               # as your current renders do, or you'll get doubled lines.
+TOON_OUTLINE_PX    = 1.0       # outline thickness in pixels
+TOON_EXPOSURE      = 1.0       # brightness multiplier applied before the toon steps (e.g. 1.3 to lift a dark render)
+TOON_BANDS         = 4         # brightness steps: 2 = hard light/shadow, 3-4 = a few tones, 0 = off
+TOON_HUE_STEPS     = 24        # hues allowed round the colour wheel (24 = every 15 degrees, 0 = off)
+TOON_SAT_STEPS     = 6         # colourfulness steps, 0 (grey) to full (0 = off)
+KEEP_RAW           = True      # also keep the untouched render of every frame in a "raw" folder, to compare against
  
 OUT_DIR            = "//sprites/"   # "//" = folder next to the .blend file
 MAKE_SPRITE_SHEET  = True
@@ -126,7 +136,10 @@ def main():
         pct=r.resolution_percentage, transparent=r.film_transparent,
         fmt=r.image_settings.file_format, mode=r.image_settings.color_mode,
         path=r.filepath, view=vs.view_transform, look=vs.look, camera=scene.camera,
+        filter=r.filter_size, freestyle=r.use_freestyle, lt_mode=r.line_thickness_mode,
+        lt=r.line_thickness, vl_freestyle=bpy.context.view_layer.use_freestyle,
     )
+    outline_set = None
     hidden = []
     temp_objects = []
  
@@ -147,6 +160,22 @@ def main():
             vs.view_transform = "Standard"
             vs.look = "None"
  
+        # ---------- toon look: no smoothing, black outline ----------
+        if TOON:
+            r.filter_size = 0.0            # no pixel filtering: every pixel is one clean sample
+            if TOON_OUTLINE:
+                r.use_freestyle = True
+                r.line_thickness_mode = "ABSOLUTE"
+                r.line_thickness = TOON_OUTLINE_PX
+                vl = bpy.context.view_layer
+                vl.use_freestyle = True
+                outline_set = vl.freestyle_settings.linesets.new("SpriteOutline")
+                outline_set.select_silhouette = True
+                outline_set.select_border = True
+                outline_set.select_crease = True
+                outline_set.linestyle.color = (0.0, 0.0, 0.0)
+                outline_set.linestyle.thickness = TOON_OUTLINE_PX
+
         # ---------- temporary camera ----------
         dist = radius * 4
         cam_data = bpy.data.cameras.new("SpriteCam")
@@ -159,22 +188,6 @@ def main():
         temp_objects.append(cam)
         scene.camera = cam
         cam.rotation_mode = "XYZ"
- 
-        # ---------- lighting ----------
-        sun = None
-        if LIGHTING == "script":
-            for o in scene.objects:
-                if o.type == "LIGHT" and not o.hide_render:
-                    o.hide_render = True
-                    hidden.append(o)
-            sun_data = bpy.data.lights.new("SpriteSun", "SUN")
-            sun_data.energy = SUN_STRENGTH
-            sun = bpy.data.objects.new("SpriteSun", sun_data)
-            scene.collection.objects.link(sun)
-            temp_objects.append(sun)
-            sun.rotation_mode = "XYZ"
-        sun_offset = Euler((math.radians(-SUN_OFFSET_UP),
-                            math.radians(SUN_OFFSET_SIDE), 0)).to_matrix()
  
         # ---------- hide parts (e.g. propeller blades) ----------
         frags = [f.lower() for f in HIDE_DURING_RENDER]
@@ -196,14 +209,17 @@ def main():
             forward = rot.to_matrix() @ Vector((0, 0, -1))
             cam.rotation_euler = rot
             cam.location = centre - forward * dist
-            if sun:
-                sun.rotation_euler = (rot.to_matrix() @ sun_offset).to_euler("XYZ")
-                sun.location = cam.location
  
             name = f"az{yaw:03d}_el{pitch:+03d}.png"
             path = os.path.join(out, name)
             r.filepath = path
             bpy.ops.render.render(write_still=True)
+            if TOON:
+                if KEEP_RAW:
+                    raw_dir = os.path.join(out, "raw")
+                    os.makedirs(raw_dir, exist_ok=True)
+                    shutil.copyfile(path, os.path.join(raw_dir, name))
+                stylize(path)
             frames.append(dict(az=yaw, el=pitch, file=name, path=path,
                                col=yaws.index(yaw), row=pitches.index(pitch)))
             log(f"{i}/{len(shots)}  {name}")
@@ -220,10 +236,18 @@ def main():
             bpy.data.objects.remove(o, do_unlink=True)
             if isinstance(data, bpy.types.Camera):
                 bpy.data.cameras.remove(data)
-            elif isinstance(data, bpy.types.Light):
-                bpy.data.lights.remove(data)
         for o in hidden:
             o.hide_render = False
+        if outline_set is not None:
+            style = outline_set.linestyle
+            bpy.context.view_layer.freestyle_settings.linesets.remove(outline_set)
+            if style.users == 0:
+                bpy.data.linestyles.remove(style)
+        r.filter_size = saved["filter"]
+        r.use_freestyle = saved["freestyle"]
+        r.line_thickness_mode = saved["lt_mode"]
+        r.line_thickness = saved["lt"]
+        bpy.context.view_layer.use_freestyle = saved["vl_freestyle"]
         r.engine = saved["engine"]
         r.resolution_x, r.resolution_y = saved["rx"], saved["ry"]
         r.resolution_percentage = saved["pct"]
@@ -236,6 +260,65 @@ def main():
         scene.camera = saved["camera"]
  
  
+def rgb_to_hsv(rgb):
+    r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    mx = rgb.max(axis=1)
+    d = mx - rgb.min(axis=1)
+    safe = np.where(d > 1e-6, d, 1.0)
+    h = np.where(mx == r, ((g - b) / safe) % 6.0,
+        np.where(mx == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0))
+    h = np.where(d > 1e-6, h / 6.0, 0.0) % 1.0
+    s = np.where(mx > 1e-6, d / np.maximum(mx, 1e-6), 0.0)
+    return h, s, mx
+
+
+def hsv_to_rgb(h, s, v):
+    h6 = h * 6.0
+    i = np.floor(h6).astype(np.int64) % 6
+    f = h6 - np.floor(h6)
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    conds = [i == k for k in range(6)]
+    r = np.select(conds, [v, q, p, p, t, v])
+    g = np.select(conds, [t, v, v, q, p, p])
+    b = np.select(conds, [p, p, t, v, v, q])
+    return np.stack([r, g, b], axis=1)
+
+
+def stylize(path):
+    """Pixel-art finish on one rendered frame: hard alpha edges, then brightness, hue and colourfulness
+    each snapped to a few steps. It works on hue / saturation / brightness rather than on the red, green and
+    blue channels separately, so snapping can't shift a colour (a tan going maroon) and a dark or bright render
+    keeps its colours."""
+    img = bpy.data.images.load(path, check_existing=False)
+    n = img.size[0] * img.size[1]
+    px = np.empty(n * 4, dtype=np.float32)
+    img.pixels.foreach_get(px)
+    p = px.reshape(-1, 4)
+    solid = p[:, 3] > 0.5                       # no half-transparent edge pixels
+    rgb = np.clip(p[:, :3] * TOON_EXPOSURE, 0.0, 1.0)
+
+    h, sat, v = rgb_to_hsv(rgb)
+    keep = v < 0.06                             # the black outline stays black
+    if TOON_BANDS and TOON_BANDS > 1:
+        v = np.where(keep, v, np.maximum(np.round(v * TOON_BANDS) / TOON_BANDS, 0.5 / TOON_BANDS))
+    if TOON_SAT_STEPS and TOON_SAT_STEPS > 0:
+        sat = np.round(sat * TOON_SAT_STEPS) / TOON_SAT_STEPS
+    if TOON_HUE_STEPS and TOON_HUE_STEPS > 0:
+        h = (np.round(h * TOON_HUE_STEPS) / TOON_HUE_STEPS) % 1.0
+    rgb = np.where(keep[:, None], rgb, hsv_to_rgb(h, np.clip(sat, 0.0, 1.0), np.clip(v, 0.0, 1.0)))
+
+    rgb[~solid] = 0.0
+    p[:, :3] = rgb
+    p[:, 3] = solid.astype(np.float32)
+    img.pixels.foreach_set(p.ravel())
+    img.filepath_raw = path
+    img.file_format = "PNG"
+    img.save()
+    bpy.data.images.remove(img)
+
+
 def make_sheet(frames, cols, rows, out):
     S = FRAME_SIZE
     W, H = cols * S, rows * S
