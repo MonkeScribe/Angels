@@ -707,7 +707,7 @@ public class Game1 : Game
                 var hull = ConvexHull(pts);
                 if (hull.Count < 3) continue;
                 float minY = float.MaxValue, maxY = float.MinValue;
-                foreach (var h in hull) { minY = MathF.Min(minY, h.Y); maxY = MathF.Max(maxY, h.Y); }
+                foreach (var hp in hull) { minY = MathF.Min(minY, hp.Y); maxY = MathF.Max(maxY, hp.Y); }
                 for (var y = MathF.Floor(minY); y <= MathF.Ceiling(maxY); y += 1f)
                 {
                     float lo = float.MaxValue, hi = float.MinValue;
