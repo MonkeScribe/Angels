@@ -35,13 +35,31 @@ public sealed class Guns
     /// tracers, the muzzle flashes and the hit sparks.</summary>
     public const bool ShowSightTracers = true;
 
-    /// <summary>Gun muzzles in the aircraft frame (feet): x along the right wing, y up, z forward. Four per wing,
-    /// spread outboard of the propeller arc, a little below the wing chord line and ahead of the leading edge.</summary>
-    public static readonly Vector3[] Muzzles =
+    /// <summary>Whether tracers are drawn on the 2D map (tiny red dashes).</summary>
+    public const bool ShowMapTracers = true;
+
+    /// <summary>Where each gun's round leaves the airframe, as a pixel of the level sprite (256 px, nose up): the tips of the
+    /// barrel stubs on its wings. There are four stubs, two a wing, and each serves two of the eight guns (guns 0-3 are the
+    /// left wing, 4-7 the right).</summary>
+    public static readonly Vector2[] MuzzleSpritePx =
     {
-        new(-10.2f, -0.9f, 2.6f), new(-8.9f, -0.9f, 2.9f), new(-7.4f, -1f, 3.2f), new(-6.0f, -1f, 3.4f),
-        new(6.0f, -1f, 3.4f), new(7.4f, -1f, 3.2f), new(8.9f, -0.9f, 2.9f), new(10.2f, -0.9f, 2.6f),
+        new(85.5f, 89f), new(85.5f, 89f), new(89.5f, 79f), new(89.5f, 79f),     // left wing: outer stub, then inner stub
+        new(166.5f, 79f), new(166.5f, 79f), new(171f, 89f), new(171f, 89f),     // right wing: inner stub, then outer stub
     };
+
+    private const float SpritePxPerFt = 204f / 37.2f;     // the sprite's wingspan in px over the real span in feet
+
+    /// <summary>Gun muzzles in the aircraft frame (feet): x along the right wing, y up, z forward, from the sprite points
+    /// above (the sprite's origin, 128,133, is the aircraft's origin), a little below the wing chord line.</summary>
+    public static readonly Vector3[] Muzzles = BuildMuzzles();
+
+    private static Vector3[] BuildMuzzles()
+    {
+        var m = new Vector3[GunCount];
+        for (var g = 0; g < GunCount; g++)
+            m[g] = new Vector3((MuzzleSpritePx[g].X - 128f) / SpritePxPerFt, -1f, (133f - MuzzleSpritePx[g].Y) / SpritePxPerFt);
+        return m;
+    }
 
     // ---- Ballistics. ----
 
@@ -63,6 +81,7 @@ public sealed class Guns
         public float Age;
         public bool Tracer;
         public int Gun;
+        public Vector2 MapOffset;     // world px to add to the round's position on the 2D map, so it starts at the drawn muzzle
     }
 
     public readonly List<Round> Rounds = new();
@@ -93,7 +112,7 @@ public sealed class Guns
     private float Spread() => ((float)_rng.NextDouble() * 2f - 1f) * SpreadRad;
 
     /// <summary>One tick with the trigger held. Returns which wings fired this tick (bit 0 left, bit 1 right).</summary>
-    public int Fire(Vector3 pos, Vector3 right, Vector3 up, Vector3 fwd, Vector3 aircraftVel)
+    public int Fire(Vector3 pos, Vector3 right, Vector3 up, Vector3 fwd, Vector3 aircraftVel, Vector2[] mapMuzzleWorld)
     {
         var wings = 0;
         var perTick = RoundsPerMinutePerGun / 60f / 60f;
@@ -115,7 +134,11 @@ public sealed class Guns
                 // Rounds fired within the same tick are spread along it, so a burst doesn't clump into tick steps.
                 var lead = _phase[g] / perTick / 60f;
                 var vel = dir * MuzzleVelocityFtS + aircraftVel;
-                Rounds.Add(new Round { Pos = muzzle + vel * lead, Vel = vel, Age = lead, Tracer = _fired[g]++ % TracerEvery == 0, Gun = g });
+                Rounds.Add(new Round
+                {
+                    Pos = muzzle + vel * lead, Vel = vel, Age = lead, Tracer = _fired[g]++ % TracerEvery == 0, Gun = g,
+                    MapOffset = mapMuzzleWorld[g] - new Vector2(muzzle.X, muzzle.Z) * World.PxPerFoot,
+                });
                 wings |= m.X < 0f ? 1 : 2;
             }
             if (Ammo[g] == 0) _phase[g] = 0f;

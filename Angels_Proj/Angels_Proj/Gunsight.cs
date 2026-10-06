@@ -477,10 +477,10 @@ public sealed class Gunsight
             _blendLines.Add(Vtx(dl.A - camPos, col)); _blendLines.Add(Vtx(dl.B - camPos, col));
         }
 
-        // Tracers: each a glowing streak, a ribbon turned to face the camera so it reads at any range. A soft orange
-        // halo under a thin hot core. The width is in feet, so a round close by is fat and a far one a fine line.
-        var haze = Premul(new Vector3(1f, 0.55f, 0.18f), 0.4f);
-        var core = Premul(new Vector3(1f, 0.93f, 0.62f), 1f);
+        // Tracers: each a streak, a ribbon turned to face the camera so it reads at any range. Pure red, a soft halo
+        // under a thin core. The width is in feet, so a round close by is fat and a far one a fine line.
+        var haze = Premul(new Vector3(1f, 0f, 0f), 0.4f);
+        var core = Premul(new Vector3(1f, 0f, 0f), 1f);
         foreach (var tr in tracers)
         {
             Vector3 a = tr.A - camPos, b = tr.B - camPos, dir = b - a, mid = (a + b) * 0.5f;

@@ -319,7 +319,18 @@ public class Game1 : Game
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
         var gs = _fm.GroundSpeed;
         var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
-        var wings = _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel);
+        // Where each muzzle is on the map, from the sprite as it is drawn (it is drawn bigger than life), so the round
+        // starts at the barrel tip on screen.
+        var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale / GroundZoom;
+        float ch = MathF.Cos(_fm.Heading), sh = MathF.Sin(_fm.Heading), bankSq = MathF.Cos(_fm.Bank * 0.6f);
+        var mapMuzzles = new Vector2[Guns.GunCount];
+        for (var g = 0; g < Guns.GunCount; g++)
+        {
+            var sp = Guns.MuzzleSpritePx[g] - Spitfire.Origin;
+            var off = new Vector2(sp.X * bankSq, sp.Y) * kw;
+            mapMuzzles[g] = _pos + new Vector2(off.X * ch - off.Y * sh, off.X * sh + off.Y * ch);
+        }
+        var wings = _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel, mapMuzzles);
         if (!Guns.ShowEffects) return;
         if ((wings & 1) != 0) _spitfire.Shot(0, _rng);
         if ((wings & 2) != 0) _spitfire.Shot(1, _rng);
@@ -787,18 +798,63 @@ public class Game1 : Game
             _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
         }
 
-        // Tracers on the map: short glowing streaks, placed and scaled by their height like everything else.
-        if (Guns.ShowEffects)
-        foreach (var tr in _tracers)
+        // Tracers on the map: tiny pure red dashes, 1 px wide and 4 long, flying along the round's path, starting at
+        // the drawn muzzle and placed and scaled by their height like everything else.
+        if (Guns.ShowMapTracers)
         {
-            var zt = Scale * GroundZoom / MathF.Max(DistFactor(tr.B.Y), 0.2f);
-            var a = centre + (new Vector2(tr.A.X, tr.A.Z) * World.PxPerFoot - _pos) * zt;
-            var b = centre + (new Vector2(tr.B.X, tr.B.Z) * World.PxPerFoot - _pos) * zt;
-            var dl = b - a;
-            var len = dl.Length();
-            if (len < 0.5f) continue;
-            _sb.Draw(_pixel, (a + b) / 2f, null, new Color(255, 214, 120) * 0.9f, MathF.Atan2(dl.Y, dl.X), new Vector2(0.5f, 0.5f),
-                new Vector2(len, MathF.Max(1f, 1.5f * s)), SpriteEffects.None, 0f);
+            var tw = Math.Max(1, (int)MathF.Round(s));
+            foreach (var rd in _guns.Rounds)
+            {
+                if (!rd.Tracer) continue;
+                var zt = s * GroundZoom / MathF.Max(DistFactor(rd.Pos.Y), 0.2f);
+                var wp = new Vector2(rd.Pos.X, rd.Pos.Z) * World.PxPerFoot + rd.MapOffset;
+                var sp = centre + (wp - _pos) * zt;
+                var vd = new Vector2(rd.Vel.X, rd.Vel.Z);
+                if (vd.LengthSquared() < 1e-3f) continue;
+                vd.Normalize();
+                _sb.Draw(_pixel, sp, null, new Color(255, 0, 0), MathF.Atan2(vd.Y, vd.X), new Vector2(0.5f, 0.5f),
+                    new Vector2(4f * tw, tw), SpriteEffects.None, 0f);
+            }
+        }
+
+        // The plane under the mouse: its targeting box (one box over the whole sprite), green, filled translucent
+        // with an outline. The mouse is over the plane when it is inside this (plus a little slack).
+        foreach (var (poly, damage) in _hoverZones)
+        {
+            var col = new Color(80, 235, 110);
+            float minY = float.MaxValue, maxY = float.MinValue;
+            foreach (var hp in poly) { minY = MathF.Min(minY, hp.Y); maxY = MathF.Max(maxY, hp.Y); }
+            for (var y = MathF.Floor(minY); y <= MathF.Ceiling(maxY); y += 1f)
+            {
+                float lo = float.MaxValue, hi = float.MinValue;
+                for (var i = 0; i < poly.Length; i++)
+                {
+                    Vector2 a = poly[i], b = poly[(i + 1) % poly.Length];
+                    if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y))
+                    {
+                        var x = a.X + (y - a.Y) / (b.Y - a.Y) * (b.X - a.X);
+                        lo = MathF.Min(lo, x); hi = MathF.Max(hi, x);
+                    }
+                }
+                if (hi > lo) _sb.Draw(_pixel, new Rectangle((int)lo, (int)y, Math.Max(1, (int)(hi - lo)), 1), col * 0.28f);
+            }
+            for (var i = 0; i < poly.Length; i++)
+            {
+                Vector2 a = poly[i], b = poly[(i + 1) % poly.Length];
+                var dl = b - a; var len = dl.Length();
+                if (len < 0.5f) continue;
+                _sb.Draw(_pixel, (a + b) / 2f, null, col, MathF.Atan2(dl.Y, dl.X), new Vector2(0.5f, 0.5f),
+                    new Vector2(len, MathF.Max(1f, 1.5f * s)), SpriteEffects.None, 0f);
+            }
+        }
+
+        // Particles (world space).
+        foreach (var p in _particles)
+        {
+            var t = p.Life / p.MaxLife;
+            var size = Math.Max(1, (int)(p.Size * z * (0.5f + 0.5f * t)));
+            var pos = centre + (p.Pos - _pos) * z;
+            _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
         }
 
         DrawTraffic(centre, TrafficPass.Above);
