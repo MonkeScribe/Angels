@@ -39,6 +39,8 @@ public class Game1 : Game
     private const float AimLeadTicks = 15f;      // the assist aims where the target's bearing and elevation will be this soon
     // Mouse aim (War Thunder style) while the aimer is up: the pointer is hidden and held at the screen centre,
     // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
+    private const float ExitPointerPx = 180f;    // where the pointer is put when the aimer drops: this far from the centre along the heading (720p px)
+    private const int ExitHoldTicks = 8;
     private const float AimMaxStepPx = 80f;      // a tick's mouse movement beyond this is a glitch, not aiming
     private const int AimWarpSkipTicks = 3;
     private const float AimMouseDegPerPx = 0.05f; // aim swing per px of mouse movement at 720p
@@ -80,7 +82,7 @@ public class Game1 : Game
     private readonly Guns _guns;
     private int _assistTicks;                    // ticks left of the assist flying onto the target
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
-    private Point _preAimMouse;                  // where the pointer was when mouse aim took it, to put it back after
+    private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
     private Traffic.Plane _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
@@ -543,7 +545,6 @@ public class Game1 : Game
             var now = new Point(m.X, m.Y);
             if (!_mouseAim)
             {
-                _preAimMouse = now;
                 _mouseAim = true;
                 _aimYaw = 0f;
                 _aimPrev = now;
@@ -572,11 +573,17 @@ public class Game1 : Game
         }
         else if (_mouseAim)
         {
-            // Put the pointer back where it was before mouse aim took it, so the plane keeps heading the same way
-            // rather than steering for wherever the pointer was parked.
+            // Put the pointer where the plane is already heading: out from the screen centre along its heading. The
+            // plane banks toward the pointer's bearing, so it carries straight on instead of yanking round to wherever
+            // the pointer was parked or was before the aimer came up. Mouse steering is held off for a few ticks
+            // while the pointer lands (on macOS it lands late).
             _mouseAim = false;
             IsMouseVisible = true;
-            if (IsActive) Mouse.SetPosition(_preAimMouse.X, _preAimMouse.Y);
+            var hdg = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
+            var exit = new Vector2(vp.Width / 2f, vp.Height / 2f) + hdg * ExitPointerPx * Scale;
+            exit = Vector2.Clamp(exit, new Vector2(8f, 8f), new Vector2(vp.Width - 8f, vp.Height - 8f));
+            if (IsActive) Mouse.SetPosition((int)exit.X, (int)exit.Y);
+            _exitHold = ExitHoldTicks;
         }
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
@@ -630,6 +637,10 @@ public class Game1 : Game
             var err = MathHelper.WrapAngle(pointBearing - _fm.Heading);
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
             if (pitchKey == 0f) _fm.PointPitch(pointElevDeg);
+        }
+        else if (_exitHold > 0)
+        {
+            _exitHold--; // the pointer is landing on the heading; hold the bank until it has
         }
         else if (d.Length() > DeadzonePx)
         {
