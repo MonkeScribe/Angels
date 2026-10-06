@@ -76,7 +76,8 @@ public class Game1 : Game
     private SpriteBatch _sb;
     private Texture2D _pixel, _grass, _tree;
     private Texture2D[] _houses, _clouds;
-    private SpriteSphere _sphere;      // the other aircraft: views of the plane from every angle
+    private SpriteSphere _sphere;      // the other aircraft: views of the late-war Spitfire from every angle
+    private SpriteSphere _playerSphere; // the player's: the early-war Spitfire
     private readonly Fx _fx = new();
     private readonly Traffic _traffic;
     private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
@@ -156,7 +157,8 @@ public class Game1 : Game
         _sb = new SpriteBatch(GraphicsDevice);
         _pixel = Art.Pixel(GraphicsDevice);
         _instruments = new Instruments(GraphicsDevice, _pixel);
-        _sphere = new SpriteSphere(GraphicsDevice);
+        _sphere = SpriteSphere.LoadLateWar(GraphicsDevice);
+        _playerSphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
         _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere);
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
@@ -335,7 +337,7 @@ public class Game1 : Game
     {
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
         propBehind = f.Y < -0.1f;
-        return _sphere.Pick(Vector3.UnitY, -Vector3.UnitZ, f, r, u);
+        return _playerSphere.Pick(Vector3.UnitY, -Vector3.UnitZ, f, r, u);
     }
 
     /// <summary>One tick with the trigger held: every gun fires its share of rounds, each leaving at muzzle velocity
@@ -360,7 +362,7 @@ public class Game1 : Game
                 // The muzzle in the sphere's frame (x nose, y left, z up; its centre is a little ahead of the plane's origin
                 // and above the nose's axis), put where the picture shows it.
                 var m = Guns.Muzzles[g];
-                mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z + 0.7f, -m.X, m.Y - 1.25f)) * kws;
+                mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z, -m.X, m.Y) + _playerSphere.MuzzleShift) * kws;
                 continue;
             }
             var sp = Guns.MuzzleSpritePx[g] - Spitfire.Origin;
@@ -878,8 +880,8 @@ public class Game1 : Game
                 // The sprite sphere: the picture for how the plane is turned (heading, pitch and bank all show in it).
                 var view = PlayerView(out var propBehind);
                 var sc = ps / Spitfire.ArtScale * SpriteSphere.MapScale;
-                Spitfire.DrawSphereShadow(_sb, _sphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
-                _spitfire.DrawSphere(_sb, _sphere, view, propBehind, centre, sc, Color.White);
+                Spitfire.DrawSphereShadow(_sb, _playerSphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
+                _spitfire.DrawSphere(_sb, _playerSphere, view, propBehind, centre, sc, Color.White);
             }
             else
             {

@@ -273,8 +273,7 @@ public sealed class Spitfire
 
     // ---- Drawn from the sprite sphere: the picture for the angle we are seen from, with the propeller placed on it. ----
 
-    // The propeller hub in the sphere's frames, in feet from the middle of a frame (x nose, y left, z up), and the prop's size.
-    private static readonly Vector3 SphereHub = new(14.6f, 0f, -1.25f);
+    // The propeller's size in the sphere's frames (where its hub is, and how many blades, come with each sphere).
     private const float SphereSpinnerFt = 1.0f, SphereBladeFt = 5.45f, SphereBladeWidthPx = 2.3f;
 
     /// <summary>Draws the plane from the sprite sphere. view is the sphere's view for where we look at it from; propBehind is
@@ -282,9 +281,9 @@ public sealed class Spitfire
     public void DrawSphere(SpriteBatch sb, SpriteSphere sphere, SpriteSphere.View view, bool propBehind, Vector2 pos, float scale, Color tint)
     {
         var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
-        if (propBehind) DrawSpherePropeller(sb, view, pos, scale);
+        if (propBehind) DrawSpherePropeller(sb, sphere, view, pos, scale);
         sb.Draw(sphere.Sheet, pos, view.Src, tint, view.Roll, new Vector2(SpriteSphere.Frame / 2f), scale, flip, 0f);
-        if (!propBehind) DrawSpherePropeller(sb, view, pos, scale);
+        if (!propBehind) DrawSpherePropeller(sb, sphere, view, pos, scale);
     }
 
     /// <summary>Just the silhouette of the sphere's view, for the shadow on the ground.</summary>
@@ -296,9 +295,9 @@ public sealed class Spitfire
 
     /// <summary>The propeller as in DrawPropeller, but the disc is placed in the plane's own frame and seen from wherever the
     /// picture is taken, so it is a line edge-on, an ellipse as the nose turns toward or away from us, and tips with the bank.</summary>
-    private void DrawSpherePropeller(SpriteBatch sb, SpriteSphere.View view, Vector2 pos, float scale)
+    private void DrawSpherePropeller(SpriteBatch sb, SpriteSphere sphere, SpriteSphere.View view, Vector2 pos, float scale)
     {
-        var hub = pos + view.Project(SphereHub) * scale;
+        var hub = pos + view.Project(sphere.Hub) * scale;
         var spinnerPx = SphereSpinnerFt * SpriteSphere.PxPerFt;
         var width = MathF.Max(1f, SphereBladeWidthPx * scale);
         // A point on the disc at angle a (0 = toward the right wing, 90 degrees = straight up), as sprite px from the hub.
@@ -326,9 +325,9 @@ public sealed class Spitfire
         for (var k = 0; k < SmearSamples; k++)
         {
             var a0 = _propAngle + _propRate * Shutter * k / SmearSamples;
-            for (var b = 0; b < Blades; b++)
+            for (var b = 0; b < sphere.Blades; b++)
             {
-                var a = a0 + b * MathF.Tau / Blades;
+                var a = a0 + b * MathF.Tau / sphere.Blades;
                 var up = MathF.Sin(a);                       // the blade facing the sky is lit and over the spinner
                 var reach = Disc(a, SphereBladeFt);
                 var length = reach.Length();
