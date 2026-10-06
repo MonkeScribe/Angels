@@ -41,6 +41,7 @@ public class Game1 : Game
     // and moving the mouse swings the aim point the assist flies to, up/down and left/right of the target.
     private const float PanGain = 1.6f;          // screen px of pan per px of mouse movement
     private const float PanMarginPx = 45f;       // how close the plane may get to a screen edge when panning (720p px)
+    private const float PanFollow = 0.12f;       // how fast the camera swings to keep an aimed-at target on screen (fraction of the gap a tick)
     private const float PanReturn = 0.88f;       // pan left each tick once the button is released: it eases back to centre
     private const float ExitPointerPx = 180f;    // where the pointer is put when the aimer drops: this far from the centre along the heading (720p px)
     private const int ExitHoldTicks = 8;
@@ -90,6 +91,7 @@ public class Game1 : Game
     private Point _panStart, _panPrev;           // the pointer when the pan began (steering is held on it), and its last reading
     private Vector2 _panLockedD;                // pointer minus plane at the start of the pan: the steering held while panning
     private float _panReleaseLen;                // how far the camera was panned when the button was let go
+    private bool _panFollowing;                  // the camera is panned to keep the aimed-at target on screen
     private int _panSkip;                        // readings to ignore after the game has moved the pointer
     private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
@@ -499,8 +501,39 @@ public class Game1 : Game
                 IsMouseVisible = true;
                 if (IsActive) Mouse.SetPosition(_panStart.X, _panStart.Y);
             }
-            _pan *= PanReturn;
-            if (_pan.LengthSquared() < 0.25f) _pan = Vector2.Zero;
+            // With the aimer up, the camera follows the target: it pans just far enough to keep it on screen, within the same
+            // limit as the manual pan (the plane stays on screen). A target beyond that is let go: the aimer fades out
+            // and the camera recentres.
+            var panMargin0 = PanMarginPx * Scale;
+            var following = false;
+            if (_tracked != null && _phase == Phase.Flying && _tracked.State == Traffic.State.Flying && _traffic.All.Contains(_tracked))
+            {
+                var tk = Scale * GroundZoom / MathF.Max(0.2f, DistFactor(_tracked.Altitude));
+                var t0 = new Vector2(vp.Width / 2f, vp.Height / 2f) + (_tracked.Pos - _pos) * tk;   // where it is with no pan
+                var want = new Vector2(
+                    t0.X < panMargin0 ? t0.X - panMargin0 : t0.X > vp.Width - panMargin0 ? t0.X - (vp.Width - panMargin0) : 0f,
+                    t0.Y < panMargin0 ? t0.Y - panMargin0 : t0.Y > vp.Height - panMargin0 ? t0.Y - (vp.Height - panMargin0) : 0f);
+                if (MathF.Abs(want.X) > vp.Width / 2f - panMargin0 || MathF.Abs(want.Y) > vp.Height / 2f - panMargin0)
+                    _tracked = null;   // out of panning range
+                else
+                {
+                    following = true;
+                    _pan += (want - _pan) * PanFollow;
+                    _panReleaseLen = 0f;   // no steering blend while following: the mouse is aiming, not steering
+                }
+            }
+            if (!following)
+            {
+                if (_panFollowing && _pan != Vector2.Zero)
+                {
+                    // The camera is coming home: hold the steering on the heading the plane is on and ease it to the pointer.
+                    _panLockedD = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading)) * ExitPointerPx * Scale;
+                    _panReleaseLen = MathF.Max(_pan.Length(), 1f);
+                }
+                _pan *= PanReturn;
+                if (_pan.LengthSquared() < 0.25f) _pan = Vector2.Zero;
+            }
+            _panFollowing = following;
         }
         // The plane must stay on screen.
         var panMargin = PanMarginPx * Scale;
