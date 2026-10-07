@@ -87,7 +87,8 @@ public sealed class Spitfire : Aircraft
     public static readonly float[] Armor = { 4f, 0f, 1f, 1f, 0.5f, 2f };
 
     /// <summary>How hard each part is to destroy outright, 0-100 (see DamageTuning). Against the .303's Destructive of 30:
-    /// engine and canopy have no floor, the tail's is 10 hp, wings and fuselage 25 hp.</summary>
+    /// engine and canopy have no floor (the .303 can destroy them); wings and tail have a floor of 55 hp and the fuselage
+    /// 60, below which the .303 does less and less and can't take them into black (they stop at 26 hp, in red).</summary>
     public static readonly float[] Integrity = { 30f, 10f, 85f, 85f, 85f, 90f };
 
     /// <summary>What's left after armour is multiplied by this before it comes off the part's hit points (1 = as is).</summary>

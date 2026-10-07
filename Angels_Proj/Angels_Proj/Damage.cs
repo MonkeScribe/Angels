@@ -19,9 +19,11 @@ public enum PartState { Undamaged, Slight, Moderate, Critical, Black, Gone }
 ///
 /// Integrity: how much of a part a weapon can actually destroy. Each part has an Integrity and each weapon a
 /// Destructive rating (both 0-100). A weapon does full damage down to a floor of MaxHp x (Integrity - Destructive)%;
-/// below that floor its damage drops off sharply and keeps shrinking as the part's hit points fall. So rifle-calibre
-/// machine guns shred an engine or a canopy (low integrity, no floor) but only knock a fuselage or wing down about 75%
-/// before they start to tell less and less; cannon (high Destructive) have no floor and finish the job.
+/// below that floor its damage drops off sharply and fades to nothing at a hard stop just above black, which it never
+/// gets past: a weapon that has a floor on a part can't take that part into black at all (if the floor is already in
+/// black, the floor is the stop). So rifle-calibre machine guns shred an engine or a canopy (low integrity, no floor)
+/// but can only wear a fuselage, wing or tail down into red; cannon (high Destructive) have no floor and finish the job.
+/// (Fire is not a weapon: a part that catches fire burns down whatever its integrity.)
 /// </summary>
 public static class DamageTuning
 {
@@ -57,8 +59,9 @@ public static class DamageTuning
     // multiplier belong to the aircraft type: see Spitfire.
 
     /// <summary>Below the floor, damage is multiplied by a factor that slides from BelowFloorScale (at the floor) down to
-    /// MinScale (at zero hit points), so a weak weapon keeps chipping away but ever more slowly.</summary>
-    public static float BelowFloorScale = 0.35f, MinScale = 0.05f;
+    /// nothing at the hard stop, StopAboveBlackHp above the black line (see DamageModel.HardStop): a weak weapon keeps
+    /// chipping away ever more slowly and never takes the part into black.</summary>
+    public static float BelowFloorScale = 0.35f, StopAboveBlackHp = 1f;
 
     /// <summary>The state bands, by colour: at MaxHp green (undamaged), above SlightAbove yellow (slight), above
     /// ModerateAbove orange (moderate), above CriticalAbove red (critical), above zero black, at zero gone.</summary>
@@ -179,13 +182,22 @@ public static class DamageModel
     public static float Floor(AircraftPart part, DamageTuning.Weapon w) =>
         DamageTuning.MaxHp * Math.Clamp((part.Integrity - w.Destructive) / 100f, 0f, 1f);
 
+    /// <summary>The lowest a weapon can take a part (0 = it can destroy it): with no floor, nothing stops it; with one, just
+    /// above black, or the floor itself if that is already in black.</summary>
+    public static float HardStop(AircraftPart part, DamageTuning.Weapon w)
+    {
+        var floor = Floor(part, w);
+        return floor <= 0f ? 0f : MathF.Min(floor, DamageTuning.CriticalAbove + DamageTuning.StopAboveBlackHp);
+    }
+
     /// <summary>One round hits a part: roll, take off the armour, and take what's left off its hit points (see Apply).
     /// Returns the hit points lost (0 if the armour stopped it).</summary>
     public static float Hit(AircraftPart part, DamageTuning.Weapon w, float impactSpeedFtS, Random rng) =>
         Apply(part, w, Roll(w, impactSpeedFtS, rng) - part.Armor);
 
     /// <summary>Damage that got through a part's armour (left, already less the armour) comes off its hit points: at full
-    /// effect down to the weapon's floor for that part and reduced below it. Returns the hit points lost.</summary>
+    /// effect down to the weapon's floor for that part, then reduced, fading to nothing at its hard stop. Returns the
+    /// hit points lost.</summary>
     public static float Apply(AircraftPart part, DamageTuning.Weapon w, float left)
     {
         if (left <= 0f || part.Hp <= 0f) return 0f;
@@ -201,8 +213,13 @@ public static class DamageModel
         }
         if (raw > 0f && floor > 0f)
         {
-            var k = DamageTuning.MinScale + (DamageTuning.BelowFloorScale - DamageTuning.MinScale) * MathHelper.Clamp(hp / floor, 0f, 1f);
-            hp -= raw * k;
+            // Below the floor: what's left counts for less and less, down to nothing at the hard stop.
+            var stop = HardStop(part, w);
+            if (floor > stop && hp > stop)
+            {
+                var k = DamageTuning.BelowFloorScale * MathHelper.Clamp((hp - stop) / (floor - stop), 0f, 1f);
+                hp = MathF.Max(stop, hp - raw * k);
+            }
         }
         else hp -= raw;
         hp = MathF.Max(0f, hp);
