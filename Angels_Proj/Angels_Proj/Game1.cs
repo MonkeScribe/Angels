@@ -40,7 +40,8 @@ public class Game1 : Game
     private const float PanFollow = 0.12f;       // how fast the camera swings to keep an aimed-at target on screen (fraction of the gap a tick)
     private const float PanReturn = 0.88f;       // pan left each tick once the button is released: it eases back to centre
     private const float ExitPointerPx = 180f;    // where the pointer is put when the aimer drops: this far from the centre along the heading (720p px)
-    private const int ExitHoldTicks = 8;
+    private const int ExitKeepTicks = 60;        // once the sight starts to fade the plane keeps its trajectory this long, pointer hidden
+    private const int ExitLandTicks = 8;         // then the pointer pops up on the trajectory and steering waits this long for it to land
     private const float AimMaxStepPx = 80f;      // a tick's mouse movement beyond this is a glitch, not aiming
     private const int AimWarpSkipTicks = 3;
     private const float AimMouseDegPerPx = 0.05f; // aim swing per px of mouse movement at 720p
@@ -82,7 +83,8 @@ public class Game1 : Game
     private float _panReleaseLen;                // how far the camera was panned when the button was let go
     private bool _panFollowing;                  // the camera is panned to keep the aimed-at target on screen
     private int _panSkip;                        // readings to ignore after the game has moved the pointer
-    private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends
+    private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends (keep, then land)
+    private float _exitHeading;                 // the heading kept while the sight fades
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
     private Aircraft _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
@@ -213,6 +215,8 @@ public class Game1 : Game
         if (_testTarget != null) { _worldModel.Remove(_testTarget); _testTarget = null; }   // (ends a gun test)
         _test = TestMode.None;
         IsMouseVisible = true;
+        _mouseAim = false;
+        _exitHold = 0;
         _worldModel.SpawnPlayer(_pilot, _pos, _arcade);   // a fresh aircraft where the old one was
         _phase = Phase.Flying;
         _particles.Clear();
@@ -604,7 +608,7 @@ public class Game1 : Game
         // pointer was when the pan began; letting go puts the pointer back there and the camera eases back to the plane.
         // Like mouse aim, only the movement since the last reading counts and the pointer is recentred near an edge.
         var rightDown = m.RightButton == ButtonState.Pressed;
-        if (rightDown && _phase == Phase.Flying && !_mouseAim)
+        if (rightDown && _phase == Phase.Flying && !_mouseAim && _exitHold == 0)   // (no panning in the window after aim)
         {
             var now = new Point(m.X, m.Y);
             if (!_panning)
@@ -850,17 +854,12 @@ public class Game1 : Game
         }
         else if (_mouseAim)
         {
-            // Put the pointer where the plane is already heading: out from the screen centre along its heading. The
-            // plane banks toward the pointer's bearing, so it carries straight on instead of yanking round to wherever
-            // the pointer was parked or was before the aimer came up. Mouse steering is held off for a few ticks
-            // while the pointer lands (on macOS it lands late).
+            // The sight has lost its target and starts to fade: a hard window. For a whole second the plane keeps the
+            // trajectory it was on (wings level on this heading, the nose where it is) with the pointer still hidden and
+            // nothing to be picked; then the pointer pops up on that trajectory (see the steering below).
             _mouseAim = false;
-            IsMouseVisible = true;
-            var hdg = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
-            var exit = PlaneScreen() + hdg * ExitPointerPx * Scale;
-            exit = Vector2.Clamp(exit, new Vector2(8f, 8f), new Vector2(vp.Width - 8f, vp.Height - 8f));
-            if (IsActive) Mouse.SetPosition((int)exit.X, (int)exit.Y);
-            _exitHold = ExitHoldTicks;
+            _exitHeading = _fm.Heading;
+            _exitHold = ExitKeepTicks + ExitLandTicks;
         }
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
@@ -917,7 +916,24 @@ public class Game1 : Game
         }
         else if (_exitHold > 0)
         {
-            _exitHold--; // the pointer is landing on the heading; hold the bank until it has
+            _exitHold--;
+            if (_exitHold > ExitLandTicks)
+            {
+                // Keeping the trajectory: hold the heading the plane was on when the sight began to fade.
+                var err = MathHelper.WrapAngle(_exitHeading - _fm.Heading);
+                targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
+            }
+            else if (_exitHold == ExitLandTicks)
+            {
+                // The window is over: the pointer pops up in line with the trajectory, out from the plane along its
+                // heading, so steering toward it carries straight on. Steering waits a few more ticks while it lands
+                // (on macOS a pointer moved by the game lands late).
+                IsMouseVisible = true;
+                var hdg = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
+                var exit = PlaneScreen() + hdg * ExitPointerPx * Scale;
+                exit = Vector2.Clamp(exit, new Vector2(8f, 8f), new Vector2(vp.Width - 8f, vp.Height - 8f));
+                if (IsActive) Mouse.SetPosition((int)exit.X, (int)exit.Y);
+            }
         }
         else if (d.Length() > DeadzonePx)
         {
