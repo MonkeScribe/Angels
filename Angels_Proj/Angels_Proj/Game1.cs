@@ -87,6 +87,7 @@ public class Game1 : Game
     private int _panSkip;                        // readings to ignore after the game has moved the pointer
     private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends (keep, then land)
     private float _exitHeading;                 // the heading kept while the sight fades
+    private Aircraft _lostTarget;               // the target the sight last lost, which it takes back if it comes into view in the window
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
     private Aircraft _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
@@ -679,7 +680,10 @@ public class Game1 : Game
                     t0.X < panMargin0 ? t0.X - panMargin0 : t0.X > vp.Width - panMargin0 ? t0.X - (vp.Width - panMargin0) : 0f,
                     t0.Y < panMargin0 ? t0.Y - panMargin0 : t0.Y > vp.Height - panMargin0 ? t0.Y - (vp.Height - panMargin0) : 0f);
                 if (MathF.Abs(want.X) > vp.Width / 2f - panMargin0 || MathF.Abs(want.Y) > vp.Height / 2f - panMargin0)
+                {
+                    _lostTarget = _tracked;
                     _tracked = null;   // out of panning range
+                }
                 else
                 {
                     following = true;
@@ -767,7 +771,16 @@ public class Game1 : Game
         // sight can see). While the sight is showing, putting its centre dot on another plane switches to that one.
         if (_tracked == null || _phase != Phase.Flying || !_worldModel.Others.Contains(_tracked) ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt, LockGraceBox))
+        {
+            if (_tracked != null) _lostTarget = _tracked;
             _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
+            // While the sight is fading and the mouse still flies the plane (the second after losing the target), the lost
+            // target coming back into the sight's view puts the aimer straight back up on it.
+            if (_tracked == null && _lostTarget != null && _phase == Phase.Flying && (_mouseAim || _exitHold > ExitLandTicks) &&
+                _worldModel.Others.Contains(_lostTarget) &&
+                Gunsight.Sees(World.ToFt(_lostTarget.Pos, _lostTarget.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
+                _tracked = _lostTarget;
+        }
         if (_phase == Phase.Flying && (_tracked != null || _sightAlpha > 0.01f) && PlaneOnDot(camFt, sf) is { } onDot)
             _tracked = onDot;
         var target = _phase == Phase.Flying && _tracked != null;
@@ -851,6 +864,7 @@ public class Game1 : Game
             if (!_mouseAim)
             {
                 _mouseAim = true;
+                _exitHold = 0;        // (back on a target within the window after losing one: the window is over)
                 _aimYaw = 0f;
                 _aimPrev = now;
                 _aimSkip = 0;
