@@ -96,6 +96,7 @@ public sealed class Guns
 
     public readonly List<Round> Rounds = new();
     private readonly List<World.RayEntry> _hits = new();
+    private const float ThroughFt = 60f;   // how far past where it strikes a round can still be inside the aircraft
 
     /// <summary>What each round is: a .303 Browning (Damage.cs).</summary>
     public static readonly DamageTuning.Weapon Weapon = DamageTuning.Browning303;
@@ -173,26 +174,30 @@ public sealed class Guns
             var len = step.Length();
             if (len > 0.01f)
             {
-                // Penetration: the round's damage is rolled when it first hits (by calibre and its speed relative to that
-                // target), then it goes through the parts in its way nearest first. Each part's armour comes off the
-                // damage: if the armour stops it all, the round stops there; if not, what's left lands on the part and
-                // carries on, less that armour, into the next.
+                // Penetration: the round's damage is rolled when it hits an aircraft (by calibre and its speed relative to
+                // it), then it goes through that aircraft's parts in its way, nearest first. Each part's armour comes off
+                // the damage: if the armour stops it all, the round stops there; if not, what's left lands on the part and
+                // carries on, less that armour, into the next part behind it. When there are no more parts in its way the
+                // round stops: it doesn't come out the far side.
                 world.RayHits(r.Pos, step / len, len, shooter, _hits);
-                var stopped = false;
-                foreach (var h in _hits)
+                if (_hits.Count > 0)
                 {
-                    if (r.Damage < 0f) r.Damage = DamageModel.Roll(Weapon, (r.Vel - h.Plane.VelocityFt).Length(), _rng);
-                    var left = r.Damage - h.Plane[h.Part].Armor;
-                    if (left <= 0f)
+                    // Every part of the aircraft first hit along the round's line, however far through it reaches.
+                    var plane = _hits[0].Plane;
+                    world.RayHits(r.Pos, step / len, _hits[0].Distance + ThroughFt, shooter, _hits);
+                    if (r.Damage < 0f) r.Damage = DamageModel.Roll(Weapon, (r.Vel - plane.VelocityFt).Length(), _rng);
+                    foreach (var h in _hits)
                     {
-                        if (ShowEffects) fx.Spark(r.Pos + step / len * h.Distance);
-                        stopped = true;
-                        break;
+                        if (h.Plane != plane) continue;
+                        var left = r.Damage - plane[h.Part].Armor;
+                        if (left <= 0f) break;   // stopped by the armour
+                        world.Hit(plane, h.Part, Weapon, left, _rng);
+                        r.Damage = left;
                     }
-                    world.Hit(h.Plane, h.Part, Weapon, left, _rng);
-                    r.Damage = left;
+                    if (ShowEffects) fx.Spark(r.Pos + step / len * _hits[0].Distance);
+                    Rounds.RemoveAt(i);
+                    continue;
                 }
-                if (stopped) { Rounds.RemoveAt(i); continue; }
             }
             r.Pos += step;
             r.Vel = vel;
