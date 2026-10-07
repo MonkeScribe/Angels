@@ -731,6 +731,11 @@ public class Game1 : Game
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
         var camFt = World.ToFt(_pos, _fm.Altitude);
+        // While the sight is up (aiming, or still fading out after losing its target, or the pointer still landing after
+        // aim) the pointer picks nothing: the hidden pointer, or the one just put back, can't lock onto another plane
+        // and yank the aim across to it. Only once the sight is down can the mouse pick a target again.
+        var sightUp = _mouseAim || _sightAlpha > 0.01f || _exitHold > 0;
+        if (sightUp) pickP = new Vector2(-9999f, -9999f);
         _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
         if (_hovered != null && _showHitboxes) SpriteZones(_hovered, PlaneScreen(), _hoverZones); // drawn in the HITBOXES debug view only
