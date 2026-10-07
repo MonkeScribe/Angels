@@ -384,9 +384,9 @@ public sealed class Gunsight
             // Engine fire: the animation laid flat to the view with its base on the engine, turned so the flames stream
             // back along the plane as we see it (shorter when it points toward or away from us), bigger the fiercer it is.
             // Sorted by the engine's own distance, so it shows in front of the plane or behind it as it should.
-            if (p.Damage.OnFire)
+            if (p.OnFire)
             {
-                var strength = p.Damage.FireStrength;
+                var strength = p.FireStrength;
                 var engine = p.EngineFt() - camPos;
                 float bx = Vector3.Dot(-pf, rightV), by = Vector3.Dot(-pf, upV), bl = MathF.Sqrt(bx * bx + by * by);
                 var flameDir = bl > 0.05f ? (rightV * bx + upV * by) / bl : upV;

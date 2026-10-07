@@ -39,7 +39,7 @@ public sealed class Fx
 
     /// <summary>
     /// What a damaged engine leaves behind this tick. at is the exhaust (world feet), back the direction to the tail.
-    /// smoke and fire are 0-1 (AircraftDamage.SmokeStrength / FireStrength); both thicken and darken the trail, which
+    /// smoke and fire are 0-1 (Aircraft.SmokeStrength / FireStrength); both thicken and darken the trail, which
     /// is a puff most ticks, so at flying speed the puffs overlap into a continuous trail. leaks is the number of fuel
     /// leaks, which trail a thin pale mist from under the fuselage.
     /// </summary>

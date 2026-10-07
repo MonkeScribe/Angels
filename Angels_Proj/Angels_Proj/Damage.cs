@@ -123,14 +123,6 @@ public static class DamageModel
 {
     public static readonly int PartCount = Enum.GetValues<Part>().Length;
 
-    /// <summary>A fresh aircraft: every part at full hit points.</summary>
-    public static float[] NewParts()
-    {
-        var p = new float[PartCount];
-        Array.Fill(p, DamageTuning.MaxHp);
-        return p;
-    }
-
     public static PartState StateOf(float hp) =>
         hp >= DamageTuning.MaxHp ? PartState.Undamaged
         : hp > DamageTuning.SlightAbove ? PartState.Slight
@@ -148,19 +140,18 @@ public static class DamageModel
     }
 
     /// <summary>The hit points a weapon can take a part down to at full effect (0 = it can destroy it outright).</summary>
-    public static float Floor(Part part, DamageTuning.Weapon w) =>
-        DamageTuning.MaxHp * Math.Clamp((DamageTuning.Integrity[(int)part] - w.Destructive) / 100f, 0f, 1f);
+    public static float Floor(AircraftPart part, DamageTuning.Weapon w) =>
+        DamageTuning.MaxHp * Math.Clamp((part.Integrity - w.Destructive) / 100f, 0f, 1f);
 
     /// <summary>One round hits a part: roll, take off the armour, and take what's left off its hit points, at full
     /// effect down to the weapon's floor for that part and reduced below it. Returns the hit points lost (0 if the
     /// armour stopped it).</summary>
-    public static float Hit(float[] parts, Part part, DamageTuning.Weapon w, float impactSpeedFtS, Random rng)
+    public static float Hit(AircraftPart part, DamageTuning.Weapon w, float impactSpeedFtS, Random rng)
     {
-        var i = (int)part;
-        var left = Roll(w, impactSpeedFtS, rng) - DamageTuning.Armor[i];
-        if (left <= 0f || parts[i] <= 0f) return 0f;
-        var raw = left * DamageTuning.DamageMultiplier[i];
-        var hp = parts[i];
+        var left = Roll(w, impactSpeedFtS, rng) - part.Armor;
+        if (left <= 0f || part.Hp <= 0f) return 0f;
+        var raw = left * part.DamageMultiplier;
+        var hp = part.Hp;
         var floor = Floor(part, w);
         if (hp > floor)
         {
@@ -176,8 +167,8 @@ public static class DamageModel
         }
         else hp -= raw;
         hp = MathF.Max(0f, hp);
-        var loss = parts[i] - hp;
-        parts[i] = hp;
+        var loss = part.Hp - hp;
+        part.Hp = hp;
         return loss;
     }
 
@@ -211,84 +202,4 @@ public static class DamageModel
         PartState.Black => "BLACK",
         _ => "GONE",
     };
-}
-
-/// <summary>
-/// One aircraft's damage: the hit points of each part, plus what the engine's damage brings with it, fuel leaks and
-/// fire, and the fuel itself. Used by the player and by the other aircraft (which ignore what it does to the engine,
-/// for now, but show its smoke and fire).
-/// </summary>
-public sealed class AircraftDamage
-{
-    public readonly float[] Parts = DamageModel.NewParts();
-    public float FuelGal = DamageTuning.FuelCapacityGal;
-    public int Leaks;
-    public bool OnFire;
-    private PartState _engineSeen = PartState.Undamaged;   // the engine band last dealt with, so each band rolls once
-    private float _throttleOffSec;
-
-    public float EngineHp => Parts[(int)Part.Engine];
-    public PartState EngineState => DamageModel.StateOf(EngineHp);
-
-    /// <summary>Thrust available, 0-1: the engine's hit points as a fraction, and nothing without fuel.</summary>
-    public float EnginePower => FuelGal > 0f ? EngineHp / DamageTuning.MaxHp : 0f;
-
-    /// <summary>How fierce the fire is, 0-1: about 1% just into red, 100% with the engine at 0 hp.</summary>
-    public float FireStrength => OnFire
-        ? MathHelper.Clamp((DamageTuning.ModerateAbove - EngineHp) / DamageTuning.ModerateAbove, 0.01f, 1f) : 0f;
-
-    /// <summary>How thick the engine's black smoke is, 0-1.</summary>
-    public float SmokeStrength => MathHelper.Clamp((DamageTuning.SmokeStartsBelowHp - EngineHp) / DamageTuning.SmokeStartsBelowHp, 0f, 1f);
-
-    /// <summary>A round hits a part (see DamageModel.Hit). Returns the hit points lost.</summary>
-    public float Hit(Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng)
-    {
-        var loss = DamageModel.Hit(Parts, part, weapon, impactSpeedFtS, rng);
-        if (part == Part.Engine && loss > 0f) EngineDamaged(rng);
-        return loss;
-    }
-
-    /// <summary>Takes hit points straight off a part (debug, or damage that isn't a round).</summary>
-    public void Damage(Part part, float hp, Random rng)
-    {
-        Parts[(int)part] = MathF.Max(0f, Parts[(int)part] - hp);
-        if (part == Part.Engine) EngineDamaged(rng);
-    }
-
-    /// <summary>The engine has just lost hit points: each band it has newly entered has its say (a leak roll on entering
-    /// yellow and on entering orange; a fire on reaching red), and a hit on an engine already in red lights it again.</summary>
-    private void EngineDamaged(Random rng)
-    {
-        var now = EngineState;
-        while (_engineSeen < now)
-        {
-            _engineSeen++;
-            if (_engineSeen is PartState.Slight or PartState.Moderate)
-            {
-                if (rng.NextDouble() < DamageTuning.LeakChance) Leaks++;
-            }
-        }
-        if (now >= PartState.Critical && FuelGal > 0f)
-        {
-            OnFire = true;
-            _throttleOffSec = 0f;
-        }
-    }
-
-    /// <summary>One step of dt seconds. throttle is 0-1; burnsFuel is false for aircraft whose fuel isn't modelled (the
-    /// fire still follows their throttle, which is taken as up).</summary>
-    public void Update(float dt, float throttle, bool burnsFuel)
-    {
-        if (burnsFuel && FuelGal > 0f)
-        {
-            var burn = EnginePower > 0f ? MathHelper.Lerp(DamageTuning.FuelBurnIdleGalPerMin, DamageTuning.FuelBurnFullGalPerMin, throttle) : 0f;
-            FuelGal = MathF.Max(0f, FuelGal - (burn + Leaks * DamageTuning.LeakGalPerMin) * dt / 60f);
-        }
-        if (!OnFire) return;
-        if (FuelGal <= 0f) { OnFire = false; return; }
-        _throttleOffSec = throttle < DamageTuning.FireThrottleOff ? _throttleOffSec + dt : 0f;
-        if (_throttleOffSec >= DamageTuning.FireOutSec) { OnFire = false; return; }
-        var rate = MathHelper.Lerp(DamageTuning.FireBurnMinHpPerSec, DamageTuning.FireBurnMaxHpPerSec, FireStrength);
-        Parts[(int)Part.Engine] = MathF.Max(0f, EngineHp - rate * dt);
-    }
 }

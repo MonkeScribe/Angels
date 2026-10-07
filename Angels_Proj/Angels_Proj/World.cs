@@ -74,20 +74,24 @@ public sealed class World
             // Into the plane's frame (local +z is backwards, so forward is -z).
             Vector3 o = new(Vector3.Dot(rel, r), Vector3.Dot(rel, u), Vector3.Dot(rel, -f));
             Vector3 d = new(Vector3.Dot(dir, r), Vector3.Dot(dir, u), Vector3.Dot(dir, -f));
-            foreach (var b in DamageTuning.Fighter)
-                if (p.Parts[(int)b.Part] > 0f && Slab(o, d, b.Min, b.Max, out var t) && t < distance)
-                {
-                    distance = t; hit = p; part = b.Part;
-                }
+            foreach (var pt in p.Parts)
+            {
+                if (pt.Gone) continue;
+                foreach (var b in pt.Boxes)
+                    if (Slab(o, d, b.Min, b.Max, out var t) && t < distance)
+                    {
+                        distance = t; hit = p; part = pt.Kind;
+                    }
+            }
         }
         return hit != null;
     }
 
-    /// <summary>A round hits a part of an aircraft (see AircraftDamage.Hit). Returns the hit points the part lost.</summary>
+    /// <summary>A round hits a part of an aircraft (see Aircraft.Hit). Returns the hit points the part lost.</summary>
     public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng)
     {
         Hits++;
-        return a.Damage.Hit(part, weapon, impactSpeedFtS, rng);
+        return a.Hit(part, weapon, impactSpeedFtS, rng);
     }
 
     /// <summary>The twelve edges of every hit box of an aircraft, as pairs of world points (feet), coloured by the state of
@@ -98,7 +102,7 @@ public sealed class World
         HitBoxCorners(p, boxes);
         foreach (var (c, part) in boxes)
         {
-            var color = DamageModel.StateColor(DamageModel.StateOf(p.Parts[(int)part]));
+            var color = DamageModel.StateColor(p[part].State);
             for (var i = 0; i < 8; i++)
                 for (var bit = 1; bit <= 4; bit <<= 1)
                     if ((i & bit) == 0) into.Add((c[i], c[i | bit], color));
@@ -110,7 +114,8 @@ public sealed class World
     {
         Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
         var centre = p.PositionFt;
-        foreach (var bx in DamageTuning.Fighter)
+        foreach (var pt in p.Parts)
+        foreach (var bx in pt.Boxes)
         {
             var c = new Vector3[8];
             for (var i = 0; i < 8; i++)

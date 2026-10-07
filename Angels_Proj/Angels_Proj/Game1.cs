@@ -121,7 +121,7 @@ public class Game1 : Game
     private Aircraft Player => _worldModel.Player;
     // Shorthands for the player's aircraft: its flight model, its damage, and its position (world px at 720p; screen centre).
     private FlightModel _fm => Player.Flight;
-    private AircraftDamage _dmg => Player.Damage;
+    private Aircraft _dmg => Player;              // (its damage, fuel and fire are on the aircraft itself)
     private Vector2 _pos { get => Player.Pos; set => Player.Pos = value; }
     private Instruments _instruments;
     private int _lastWheel;
@@ -304,7 +304,7 @@ public class Game1 : Game
 
     // The targeting box of a traffic plane: one box over the whole sprite (96 px, nose up, centred on 48,48), from
     // wingtip to wingtip and nose to tail, in sprite px. Hovering it tells the plane to turn and pitch at the target.
-    // This is separate from the hit boxes that rounds are tested against (see DamageTuning.Fighter in Damage.cs and the HITBOXES view).
+    // This is separate from the hit boxes that rounds are tested against (see each aircraft's parts, DamageTuning.Fighter in Damage.cs, and the HITBOXES view).
     private const float BoxX0 = -46f, BoxY0 = -42f, BoxX1 = 46f, BoxY1 = 40f;
     private const float HoverPadPx = 4f;             // sprite px of slack round the box, so the plane is easy to hover
 
@@ -429,7 +429,7 @@ public class Game1 : Game
             case 2: _hudBars = !_hudBars; break;
             case 3: _showHitboxes = !_showHitboxes; break;
             case 4: _sphereSprite = !_sphereSprite; break;
-            case 5: _dmg.Damage(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
+            case 5: _dmg.DamagePart(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
             case 6:
                 _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
@@ -1222,7 +1222,7 @@ public class Game1 : Game
             var screen = centre + (c.Pos - _pos) * z;
             var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
             _sb.Draw(_sphere.Sheet, screen, view.Src, tint * alpha, view.Roll, origin, scale * SpriteSphere.MapScale, flip, 0f);
-            if (c.Damage.OnFire) DrawFire(_sphere, view, screen, scale * SpriteSphere.MapScale, c.Damage.FireStrength * alpha, c.Salt);
+            if (c.OnFire) DrawFire(_sphere, view, screen, scale * SpriteSphere.MapScale, c.FireStrength * alpha, c.Salt);
         }
         if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
     }
@@ -1379,7 +1379,7 @@ public class Game1 : Game
         PixelFont.Draw(_sb, _pixel, "TARGET DAMAGE", new Vector2(x, y), px, new Color(255, 206, 84));
         for (var i = 0; i < DamageModel.PartCount; i++)
         {
-            var hp = p.Parts[i];
+            var hp = p.Parts[i].Hp;
             var state = DamageModel.StateOf(hp);
             var ry = y + (i + 1) * rowH;
             var col = state == PartState.Black ? new Color(90, 90, 90) : DamageModel.StateColor(state);   // black on the dark panel: grey
