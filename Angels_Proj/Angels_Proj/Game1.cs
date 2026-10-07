@@ -109,6 +109,11 @@ public class Game1 : Game
     private float _lastAimBearing, _lastAimElev;
     // Gun test (debug menu): a target held still in the air, and the player held on a sphere round it, facing its centre.
     private bool _gunTest;
+    // FPS counter: frames drawn, counted over half-second spans of real time.
+    private bool _showFps = true;
+    private readonly System.Diagnostics.Stopwatch _fpsClock = System.Diagnostics.Stopwatch.StartNew();
+    private int _fpsFrames;
+    private float _fps;
     private Aircraft _testTarget;
     private float _testAz, _testEl, _testRange;          // rad round the target from its nose-on side, rad up, feet
     private const float TestOrbitDegPerPx = 0.3f;        // mouse movement to orbit
@@ -467,7 +472,7 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "HIT OWN ENGINE", "GUN TEST", "SPAWN TARGETS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "HIT OWN ENGINE", "GUN TEST", "FPS", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
@@ -477,6 +482,7 @@ public class Game1 : Game
         3 => _showHitboxes ? "ON" : "OFF",
         4 => $"{MathF.Ceiling(_dmg.EngineHp):0} HP",
         5 => _gunTest ? "ON" : "OFF",
+        6 => _showFps ? "ON" : "OFF",
         _ => "",
     };
 
@@ -495,7 +501,8 @@ public class Game1 : Game
             case 5:
                 if (_gunTest) Reset(); else StartGunTest();
                 break;
-            case 6:
+            case 6: _showFps = !_showFps; break;
+            case 7:
                 _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
@@ -1160,6 +1167,7 @@ public class Game1 : Game
         _instruments.Draw(_sb, _fm, GraphicsDevice.Viewport.Bounds, Scale);
         _gunsight.Draw(_sb, _pixel, sightRect, s, _firing, _sightAlpha);
         DrawBanner();
+        DrawFps();
         DrawMenu();
         _sb.End();
 
@@ -1418,6 +1426,25 @@ public class Game1 : Game
             var v = $"{MathF.Ceiling(hp):0} {DamageModel.Name(state)}";
             PixelFont.Draw(_sb, _pixel, v, new Vector2(x + w - PixelFont.Measure(v, px), ry), px, col);
         }
+    }
+
+    /// <summary>Frames actually drawn per second, in the bottom-left corner. (The game itself ticks at a fixed 60 a second;
+    /// this shows whether drawing keeps up.)</summary>
+    private void DrawFps()
+    {
+        _fpsFrames++;
+        var secs = (float)_fpsClock.Elapsed.TotalSeconds;
+        if (secs >= 0.5f)
+        {
+            _fps = _fpsFrames / secs;
+            _fpsFrames = 0;
+            _fpsClock.Restart();
+        }
+        if (!_showFps) return;
+        var s = Scale;
+        var px = Math.Max(2, (int)MathF.Round(2.2f * s));
+        var col = _fps >= 55f ? new Color(94, 224, 160) : _fps >= 30f ? new Color(255, 206, 84) : new Color(255, 94, 94);
+        PixelFont.Draw(_sb, _pixel, $"FPS {_fps:0}", new Vector2(12 * s, GraphicsDevice.Viewport.Height - 12 * s - 7 * px), px, col);
     }
 
     private void DrawHud()
