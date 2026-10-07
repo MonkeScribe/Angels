@@ -107,8 +107,21 @@ public class Game1 : Game
     private float _lastPointBearing, _lastPointElev;
     private Aircraft _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
-    // Gun test (debug menu): a target held still in the air, and the player held on a sphere round it, facing its centre.
-    private bool _gunTest;
+    // Tests (debug menu). Each puts a target in the air and holds the player on a sphere round it, facing its centre, the
+    // sight up: the gun test with the target held still, the cloud tests with it flying straight through a cloud.
+    private enum TestMode { None, Gun, FollowThroughCloud, CloudIntoView }
+    private TestMode _test;
+    private bool InTest => _test != TestMode.None;
+    private Vector3 _testCloudFt;                        // the cloud a cloud test flies through (world feet)
+    // Debug menu, and the PERF overlay's timings.
+    private readonly DebugMenu _menu = new();
+    private bool _menuOpen { get => _menu.Open; set => _menu.Open = value; }
+    private readonly Perf _perf = new();
+    private bool _showPerf;
+    private int _mapClouds;                              // clouds the map drew last frame
+    private float _mapCloudFill;                         // and how many screens over they cover
+    private float _frameMs, _frameMsMax, _frameMsMaxShown; // time between frames drawn; the worst in the last half second
+    private long _lastFrameTick;
     // FPS counter: frames drawn, counted over half-second spans of real time.
     private bool _showFps = true;
     private readonly System.Diagnostics.Stopwatch _fpsClock = System.Diagnostics.Stopwatch.StartNew();
@@ -136,8 +149,7 @@ public class Game1 : Game
     private KeyboardState _kb, _prevKb;
     private bool _prevLeft;
     private string _codeBuffer = "";
-    private bool _menuOpen, _arcade, _cloudsOn = true, _hudBars;
-    private int _menuSel;
+    private bool _arcade, _cloudsOn = true, _hudBars;
     private readonly Random _rng = new();
     private Phase _phase = Phase.Flying;
     private string _reason = "";
@@ -176,6 +188,7 @@ public class Game1 : Game
         _effects = new EffectArt(GraphicsDevice);
         _art = new AircraftArt(_pixel, _effects);
         _gunsight = new Gunsight(GraphicsDevice, _sb, _effects);
+        BuildMenu();
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
         _w2 = new RenderTarget2D(GraphicsDevice, vp0.Width / 2, vp0.Height / 2);
@@ -214,7 +227,7 @@ public class Game1 : Game
     private void Reset()
     {
         if (_testTarget != null) { _worldModel.Remove(_testTarget); _testTarget = null; }   // (ends a gun test)
-        _gunTest = false;
+        _test = TestMode.None;
         IsMouseVisible = true;
         _worldModel.SpawnPlayer(_pilot, _pos, _arcade);   // a fresh aircraft where the old one was
         _phase = Phase.Flying;
@@ -377,27 +390,64 @@ public class Game1 : Game
     /// round it, the wheel changes the range, firing works as usual. R (or the menu) ends it.</summary>
     private void StartGunTest()
     {
-        if (_phase != Phase.Flying) Reset();
-        _traffic.Clear(_worldModel);
-        _testTarget = new Spitfire(null) { Pos = _pos, Frozen = true };
-        _testTarget.Flight.Altitude = MathF.Max(_fm.Altitude, 3000f);
-        _testTarget.Flight.Heading = 0f;
-        _testTarget.Flight.Speed = 0f;
-        _worldModel.Add(_testTarget);
-        _testAz = MathF.PI;            // behind it
+        var target = BeginTest(TestMode.Gun, _pos, MathF.Max(_fm.Altitude, 3000f), 0f);
+        target.Frozen = true;
+        target.Flight.Speed = 0f;
         _testEl = 0.17f;               // a little above
         _testRange = Guns.ConvergeFt;
-        _gunTest = true;
         _showHitboxes = true;
+    }
+
+    /// <summary>The cloud tests, for chasing down frame-rate drops: a Spitfire flies straight and level through a cloud
+    /// with the player held close behind it, sight up. FollowThroughCloud starts it 2,500 ft short of the cloud (already in
+    /// view); CloudIntoView starts it 6,000 ft short, so the cloud first comes into the view box (3,200 ft) during the run.
+    /// The mouse still orbits and the wheel still changes the range; R ends it.</summary>
+    private void StartCloudTest(TestMode mode)
+    {
+        // The nearest cloud to the player, at a height where there are plenty.
+        var puffs = new System.Collections.Generic.List<CloudField.Puff>();
+        CloudField.Query(_pos, 40000f, 12000f, 6000f, puffs);
+        if (puffs.Count == 0) return;
+        var cloud = puffs[0];
+        foreach (var p in puffs)
+            if (Vector2.DistanceSquared(p.Pos, _pos) < Vector2.DistanceSquared(cloud.Pos, _pos)) cloud = p;
+        _testCloudFt = World.ToFt(cloud.Pos, cloud.Height);
+        // Line up on it from the player's side.
+        var toCloud = cloud.Pos - _pos;
+        var heading = MathF.Atan2(toCloud.X, -toCloud.Y);
+        var dir = new Vector2(MathF.Sin(heading), -MathF.Cos(heading));
+        var startFt = mode == TestMode.CloudIntoView ? 6000f : 2500f;
+        var target = BeginTest(mode, cloud.Pos - dir * startFt * World.PxPerFoot, cloud.Height, heading);
+        target.Pilot = new FormationPilot { CourseHeading = heading, TurnRate = 0f, CruiseAltFt = cloud.Height, CruiseThrottle = 0.6f };
+        target.Flight.Speed = 280f / FlightModel.Mph;
+        target.Flight.SnapOnRelease = false;
+        target.Flight.Throttle = 0.6f;
+        _testEl = 0.06f;
+        _testRange = 350f;
+    }
+
+    /// <summary>What every test does first: clears the sky, puts a Spitfire at pos (world px), altFt, heading, and starts
+    /// the player behind it with the sight up.</summary>
+    private Aircraft BeginTest(TestMode mode, Vector2 pos, float altFt, float heading)
+    {
+        if (_phase != Phase.Flying || InTest) Reset();
+        _traffic.Clear(_worldModel);
+        _testTarget = new Spitfire(null) { Pos = pos };
+        _testTarget.Flight.Altitude = altFt;
+        _testTarget.Flight.Heading = heading;
+        _worldModel.Add(_testTarget);
+        _testAz = MathF.PI;            // behind it
+        _test = mode;
         _menuOpen = false;
         _pan = Vector2.Zero;
         var m = Mouse.GetState();
         _aimPrev = new Point(m.X, m.Y);
         _aimSkip = AimWarpSkipTicks;
         _lastWheel = m.ScrollWheelValue;
+        return _testTarget;
     }
 
-    private void UpdateGunTest(MouseState m)
+    private void UpdateTest(MouseState m)
     {
         var vp = GraphicsDevice.Viewport;
         IsMouseVisible = false;
@@ -424,14 +474,17 @@ public class Game1 : Game
         _testRange = MathHelper.Clamp(_testRange - (wheel - _lastWheel) / 120f * TestRangeStepFt, 150f, 2000f);
         _lastWheel = wheel;
 
-        // The player on the sphere round the target's centre, facing it, level wings, standing still.
-        var toMe = new Vector3(MathF.Sin(_testAz) * MathF.Cos(_testEl), MathF.Sin(_testEl), -MathF.Cos(_testAz) * MathF.Cos(_testEl));
+        // The player on the sphere round the target's centre (azimuth taken from the target's nose, so "behind" stays behind
+        // as it flies), facing it, level wings, at the target's speed.
+        var local = new Vector3(MathF.Sin(_testAz) * MathF.Cos(_testEl), MathF.Sin(_testEl), -MathF.Cos(_testAz) * MathF.Cos(_testEl));
+        float ch = MathF.Cos(_testTarget.Heading), sh = MathF.Sin(_testTarget.Heading);
+        var toMe = new Vector3(local.X * ch - local.Z * sh, local.Y, local.X * sh + local.Z * ch);
         var me = _testTarget.PositionFt + toMe * _testRange;
         var look = -toMe;
         _fm.Heading = MathF.Atan2(look.X, -look.Z);
         _fm.Gamma = MathF.Asin(MathHelper.Clamp(look.Y, -1f, 1f));
         _fm.Bank = 0f;
-        _fm.Speed = 0f;
+        _fm.Speed = _testTarget.Flight.Speed;
         _fm.Altitude = me.Y;
         _pos = new Vector2(me.X, me.Z) * World.PxPerFoot;
 
@@ -440,7 +493,7 @@ public class Game1 : Game
         _time += 1f / 60f;
         _worldModel.UpdateOthers(_fx, _rng);
         _boxEdges.Clear();
-        foreach (var p in _worldModel.Others) World.HitBoxEdges(p, _boxEdges);
+        if (_showHitboxes) foreach (var p in _worldModel.Others) World.HitBoxEdges(p, _boxEdges);
         _gunsight.DebugLines.Clear();
         foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.color));
         _guns.Update(_worldModel, Player, _fx);
@@ -466,82 +519,55 @@ public class Game1 : Game
             if (_codeBuffer == SecretCode)
             {
                 _menuOpen = !_menuOpen;
-                _menuSel = 0;
                 _codeBuffer = "";
             }
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "HIT OWN ENGINE", "GUN TEST", "FPS", "SPAWN TARGETS", "CLOSE" };
-
-    private string MenuValue(int i) => i switch
+    /// <summary>The debug menu's options, by section.</summary>
+    private void BuildMenu()
     {
-        0 => _arcade ? "ARCADE" : "REALISM",
-        1 => _cloudsOn ? "ON" : "OFF",
-        2 => _hudBars ? "ON" : "OFF",
-        3 => _showHitboxes ? "ON" : "OFF",
-        4 => $"{MathF.Ceiling(_dmg.EngineHp):0} HP",
-        5 => _gunTest ? "ON" : "OFF",
-        6 => _showFps ? "ON" : "OFF",
-        _ => "",
-    };
-
-    private void MenuActivate(int i)
-    {
-        switch (i)
+        var m = _menu;
+        m.Section("FLIGHT");
+        m.Add("MODE", () => _arcade ? "ARCADE" : "REALISM", () =>
         {
-            case 0:
-                _arcade = !_arcade;
-                _fm.VerticalRateScale = _arcade ? 2f : 1f; // arcade: altitude gain and loss twice as fast
-                break;
-            case 1: _cloudsOn = !_cloudsOn; break;
-            case 2: _hudBars = !_hudBars; break;
-            case 3: _showHitboxes = !_showHitboxes; break;
-            case 4: _dmg.DamagePart(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
-            case 5:
-                if (_gunTest) Reset(); else StartGunTest();
-                break;
-            case 6: _showFps = !_showFps; break;
-            case 7:
-                _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
-                _menuOpen = false;
-                break;
-            default: _menuOpen = false; break;
-        }
-    }
-
-    private Rectangle MenuPanel()
-    {
-        var s = Scale;
-        var vp = GraphicsDevice.Viewport;
-        int w = (int)(460 * s), h = (int)((90 + MenuRows.Length * 44 + 54) * s);
-        return new Rectangle((vp.Width - w) / 2, (int)(vp.Height * 0.25f), w, h);
-    }
-
-    private Rectangle MenuRowRect(int i)
-    {
-        var s = Scale;
-        var panel = MenuPanel();
-        return new Rectangle(panel.X + (int)(16 * s), panel.Y + (int)((70 + i * 44) * s), panel.Width - (int)(32 * s), (int)(36 * s));
-    }
-
-    private void UpdateMenu(MouseState m)
-    {
-        if (Pressed(Keys.Escape)) { _menuOpen = false; return; }
-        if (Pressed(Keys.Down)) _menuSel = (_menuSel + 1) % MenuRows.Length;
-        if (Pressed(Keys.Up)) _menuSel = (_menuSel + MenuRows.Length - 1) % MenuRows.Length;
-        if (Pressed(Keys.Enter) || Pressed(Keys.Space)) MenuActivate(_menuSel);
-
-        var pt = new Point(m.X, m.Y);
-        for (var i = 0; i < MenuRows.Length; i++)
-            if (MenuRowRect(i).Contains(pt))
-            {
-                _menuSel = i;
-                if (m.LeftButton == ButtonState.Pressed && !_prevLeft) MenuActivate(i);
-            }
+            _arcade = !_arcade;
+            _fm.VerticalRateScale = _arcade ? 2f : 1f; // arcade: altitude gain and loss twice as fast
+        });
+        m.Section("VIEW");
+        m.Add("HUD BARS", () => DebugMenu.OnOff(_hudBars), () => _hudBars = !_hudBars);
+        m.Add("HITBOXES", () => DebugMenu.OnOff(_showHitboxes), () => _showHitboxes = !_showHitboxes);
+        m.Add("FPS", () => DebugMenu.OnOff(_showFps), () => _showFps = !_showFps);
+        m.Add("PERF", () => DebugMenu.OnOff(_showPerf), () => _showPerf = !_showPerf);
+        m.Section("RENDER");
+        m.Add("MAP CLOUDS", () => DebugMenu.OnOff(_cloudsOn), () => _cloudsOn = !_cloudsOn);
+        m.Add("SIGHT CLOUDS", () => DebugMenu.OnOff(_gunsight.ShowClouds), () => _gunsight.ShowClouds = !_gunsight.ShowClouds);
+        m.Add("SIGHT BLUR", () => DebugMenu.OnOff(_gunsight.Blur), () => _gunsight.Blur = !_gunsight.Blur);
+        m.Section("DAMAGE");
+        m.Add("HIT OWN ENGINE", () => $"{MathF.Ceiling(_dmg.EngineHp):0} HP", () => _dmg.DamagePart(Part.Engine, 10f, _rng));
+        m.Section("TESTS");
+        m.Add("GUN TEST", () => DebugMenu.OnOff(_test == TestMode.Gun), () => { if (_test == TestMode.Gun) Reset(); else StartGunTest(); });
+        m.Add("FPS: FOLLOW THROUGH CLOUD", () => DebugMenu.OnOff(_test == TestMode.FollowThroughCloud),
+            () => { if (_test == TestMode.FollowThroughCloud) Reset(); else { StartCloudTest(TestMode.FollowThroughCloud); _showPerf = true; } });
+        m.Add("FPS: CLOUD INTO VIEW", () => DebugMenu.OnOff(_test == TestMode.CloudIntoView),
+            () => { if (_test == TestMode.CloudIntoView) Reset(); else { StartCloudTest(TestMode.CloudIntoView); _showPerf = true; } });
+        m.Add("SPAWN TARGETS", null, () =>
+        {
+            _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
+            _menuOpen = false;
+        });
+        m.Section("");
+        m.Add("CLOSE", null, () => _menuOpen = false);
     }
 
     protected override void Update(GameTime gameTime)
+    {
+        var t0 = _perf.Now;
+        UpdateGame(gameTime);
+        _perf.Add("UPDATE", t0);
+    }
+
+    private void UpdateGame(GameTime gameTime)
     {
         _prevKb = _kb;
         _kb = Keyboard.GetState();
@@ -552,7 +578,8 @@ public class Game1 : Game
         {
             IsMouseVisible = true; // the menu needs the pointer, even mid-aim
             _mouseAim = false;
-            UpdateMenu(m); // the game is paused while the menu is open
+            // The game is paused while the menu is open.
+            _menu.Update(Pressed, m, m.LeftButton == ButtonState.Pressed && !_prevLeft, GraphicsDevice.Viewport.Bounds, Scale);
             _lastWheel = m.ScrollWheelValue;
             _prevLeft = m.LeftButton == ButtonState.Pressed;
             base.Update(gameTime);
@@ -562,9 +589,9 @@ public class Game1 : Game
         // A fresh press only: the press that closed the debug menu is still held on the next tick and mustn't quit the game.
         if (Pressed(Keys.Escape)) Exit();
         if (Pressed(Keys.R)) Reset();
-        if (_gunTest)
+        if (InTest)
         {
-            UpdateGunTest(m);
+            UpdateTest(m);
             base.Update(gameTime);
             return;
         }
@@ -917,15 +944,35 @@ public class Game1 : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        // Time between frames drawn (what the FPS is), and the worst of the last half second.
+        var nowTick = _perf.Now;
+        if (_lastFrameTick != 0)
+        {
+            _frameMs = (nowTick - _lastFrameTick) * 1000f / System.Diagnostics.Stopwatch.Frequency;
+            _frameMsMax = MathF.Max(_frameMsMax, _frameMs);
+        }
+        _lastFrameTick = nowTick;
+        DrawGame(gameTime);
+        _perf.Add("DRAW", nowTick);
+        _perf.EndFrame();
+    }
+
+    private void DrawGame(GameTime gameTime)
+    {
         var vp = GraphicsDevice.Viewport;
         float w = vp.Width, h = vp.Height, s = Scale, z = Zoom;
         var centre = PlaneScreen();
 
         // The gunsight's 3D view goes into its own render target before anything is drawn to the screen.
         var sightRect = Instruments.GunsightRect(vp.Bounds, s);
+        var tSight = _perf.Now;
         if (_sightAlpha > 0.01f)
             _gunsight.Render(sightRect.Width, sightRect.Height, World.ToFt(_pos, _fm.Altitude), _fm.Heading, _fm.Gamma, _fm.Bank,
                 _worldModel.Others, _fx, _tracers, _fm.Throttle);
+        else { _gunsight.CloudsDrawn = 0; _gunsight.CloudFill = 0f; }
+        _perf.Add("SIGHT", tSight);
+        _mapClouds = 0;
+        _mapCloudFill = 0f;
 
         _craft.Clear();
         _craft.AddRange(_worldModel.Others);
@@ -936,11 +983,13 @@ public class Game1 : Game
         var groundT = _fm.Altitude / World.ViewBoxFt;
         var vis = 1f - World.Smooth(0.7f, 1f, groundT);
         var blur = World.Smooth(0.08f, 0.85f, groundT);
+        var tGround = _perf.Now;
         if (vis > 0.002f)
         {
             DrawGroundLayer(centre, blur);
             if (blur > 0.02f) BlurGroundLayer();
         }
+        _perf.Add("GROUND", tGround);
 
         GraphicsDevice.SetRenderTarget(null);
         GraphicsDevice.Clear(SkyColor());
@@ -958,8 +1007,12 @@ public class Game1 : Game
             if (w8 > 0.001f) _sb.Draw(_w8, full, Color.White * w8);
         }
 
+        var tc = _perf.Now;
         if (_cloudsOn) DrawClouds(centre, CloudPass.Below);
+        _perf.Add("MAP CLOUDS", tc);
+        tc = _perf.Now;
         DrawTraffic(centre, TrafficPass.Below);
+        _perf.Add("TRAFFIC", tc);
 
         // Plane: pitching foreshortens the fuselage as seen from above. Altitude reads as size and as how far
         // the shadow drifts from the plane.
@@ -1159,8 +1212,12 @@ public class Game1 : Game
             _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), p.Color * Math.Min(1f, t * 1.5f));
         }
 
+        tc = _perf.Now;
         DrawTraffic(centre, TrafficPass.Above);
+        _perf.Add("TRAFFIC", tc);
+        tc = _perf.Now;
         if (_cloudsOn) DrawClouds(centre, CloudPass.Above);
+        _perf.Add("MAP CLOUDS", tc);
 
         DrawHud();
         if (_showHitboxes) DrawDamageReadout();
@@ -1168,7 +1225,8 @@ public class Game1 : Game
         _gunsight.Draw(_sb, _pixel, sightRect, s, _firing, _sightAlpha);
         DrawBanner();
         DrawFps();
-        DrawMenu();
+        DrawPerf();
+        _menu.Draw(_sb, _pixel, GraphicsDevice.Viewport.Bounds, Scale);
         _sb.End();
 
         base.Draw(gameTime);
@@ -1230,8 +1288,10 @@ public class Game1 : Game
                 }
             }
 
+        var ts = _perf.Now;
         if (_cloudsOn) DrawClouds(centre, CloudPass.Shadows);
         DrawTraffic(centre, TrafficPass.Shadows);
+        _perf.Add("GROUND", ts);
         _sb.End();
     }
 
@@ -1357,35 +1417,14 @@ public class Game1 : Game
                     var screen = centre + (c.Pos - _pos) * z;
                     // Fade out toward the edges of the box: passing through above us, thinning away below us.
                     var alpha = (above ? MathHelper.Clamp((f - 0.2f) / 0.5f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - depth) / 1000f, 0f, 1f)) * 0.9f;
+                    // An invisible cloud still costs its whole area to draw, and one passing just above us is drawn
+                    // many times the screen's size: skip it.
+                    if (alpha < 0.01f) continue;
+                    _mapClouds++;
+                    _mapCloudFill += tex.Width * scale * tex.Height * scale / (w * h);
                     _sb.Draw(tex, screen, null, Color.White * alpha, 0f, origin, scale, SpriteEffects.None, 0f);
                 }
         }
-    }
-
-    private void DrawMenu()
-    {
-        if (!_menuOpen) return;
-        var s = Scale;
-        var px = Math.Max(2, (int)MathF.Round(2.6f * s));
-        var white = new Color(234, 242, 255);
-        var panel = MenuPanel();
-        _sb.Draw(_pixel, new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height), new Color(0, 0, 0, 90));
-        _sb.Draw(_pixel, panel, new Color(6, 14, 28, 235));
-        PixelFont.Draw(_sb, _pixel, "DEBUG", new Vector2(panel.X + 16 * s, panel.Y + 16 * s), px * 2, new Color(255, 206, 84));
-        for (var i = 0; i < MenuRows.Length; i++)
-        {
-            var r = MenuRowRect(i);
-            if (i == _menuSel) _sb.Draw(_pixel, r, new Color(74, 163, 255, 70));
-            var ty = r.Y + (r.Height - 7 * px) / 2;
-            PixelFont.Draw(_sb, _pixel, MenuRows[i], new Vector2(r.X + 10 * s, ty), px, white);
-            var v = MenuValue(i);
-            if (v.Length > 0)
-                PixelFont.Draw(_sb, _pixel, v, new Vector2(r.Right - 10 * s - PixelFont.Measure(v, px), ty), px,
-                    new Color(94, 224, 160));
-        }
-        var hint = "UP/DOWN  ENTER OR CLICK  ESC CLOSE";
-        var hpx = Math.Max(2, px - 1);
-        PixelFont.Draw(_sb, _pixel, hint, new Vector2(panel.X + 16 * s, panel.Bottom - 16 * s - 7 * hpx), hpx, new Color(150, 165, 190));
     }
 
     private void DrawBanner()
@@ -1445,6 +1484,37 @@ public class Game1 : Game
         var px = Math.Max(2, (int)MathF.Round(2.2f * s));
         var col = _fps >= 55f ? new Color(94, 224, 160) : _fps >= 30f ? new Color(255, 206, 84) : new Color(255, 94, 94);
         PixelFont.Draw(_sb, _pixel, $"FPS {_fps:0}", new Vector2(12 * s, GraphicsDevice.Viewport.Height - 12 * s - 7 * px), px, col);
+    }
+
+    /// <summary>The PERF overlay (debug menu): frame time, where the CPU's time goes, and how much the clouds cover, which
+    /// is what costs the graphics card. Fill is in whole screens (or whole sight views): 3.0 means every pixel drawn three
+    /// times over.</summary>
+    private void DrawPerf()
+    {
+        if (_fpsFrames == 0) { _frameMsMaxShown = _frameMsMax; _frameMsMax = 0f; }   // (DrawFps just started a new half second)
+        if (!_showPerf) return;
+        var s = Scale;
+        var px = Math.Max(2, (int)MathF.Round(2f * s));
+        var lines = new System.Collections.Generic.List<string>
+        {
+            $"FRAME {_frameMs:0.0} MS  WORST {_frameMsMaxShown:0.0}",
+            $"UPDATE {_perf["UPDATE"]:0.00}  DRAW {_perf["DRAW"]:0.00} MS CPU",
+            $" SIGHT {_perf["SIGHT"]:0.00}  GROUND {_perf["GROUND"]:0.00}",
+            $" CLOUDS {_perf["MAP CLOUDS"]:0.00}  TRAFFIC {_perf["TRAFFIC"]:0.00}",
+            $"MAP CLOUDS {_mapClouds}  FILL {_mapCloudFill:0.0}",
+            $"SIGHT CLOUDS {_gunsight.CloudsDrawn}  FILL {_gunsight.CloudFill:0.0}" + (_gunsight.Blur ? "" : "  NO BLUR"),
+            $"PARTICLES {_fx.Particles.Count}  ROUNDS {_guns.Rounds.Count}  AIRCRAFT {_worldModel.Planes.Count}",
+        };
+        if (_test is TestMode.FollowThroughCloud or TestMode.CloudIntoView)
+            lines.Add($"CLOUD {Vector3.Distance(World.ToFt(_pos, _fm.Altitude), _testCloudFt):0} FT AWAY");
+        var w = 0;
+        foreach (var l in lines) w = Math.Max(w, PixelFont.Measure(l, px));
+        var rowH = 10 * px;
+        var x = GraphicsDevice.Viewport.Width - w - (int)(24 * s);
+        var y = (int)(24 * s) + (_showHitboxes ? rowH * 9 : 0);
+        _sb.Draw(_pixel, new Rectangle(x - 8, y - 8, w + 16, lines.Count * rowH + 10), new Color(18, 20, 24, 210));
+        for (var i = 0; i < lines.Count; i++)
+            PixelFont.Draw(_sb, _pixel, lines[i], new Vector2(x, y + i * rowH), px, new Color(200, 205, 214));
     }
 
     private void DrawHud()

@@ -47,6 +47,11 @@ public sealed class Gunsight
 
     public Texture2D Texture => _final;
 
+    // Debug: switch the clouds or the depth-of-field blur off, and what the last frame drew (for the PERF overlay).
+    public bool ShowClouds = true, Blur = true;
+    public int CloudsDrawn;
+    public float CloudFill;      // the clouds' quads added up, in whole views: how many times over they cover the sight
+
     /// <summary>Extra world-space lines (feet) to draw in the view, with the damage value that picks their colour. For the
     /// debug hit box view; filled by the game each tick.</summary>
     public readonly List<(Vector3 A, Vector3 B, Color Color)> DebugLines = new();
@@ -202,7 +207,7 @@ public sealed class Gunsight
                 _gd.DrawUserPrimitives(PrimitiveType.TriangleList, verts, 0, verts.Length / 3);
             }
 
-            var src = Soften(_work, blur);
+            var src = Soften(_work, Blur ? blur : 0);
             _gd.SetRenderTarget(_final);
             _sb.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.LinearClamp);
             _sb.Draw(src, new Rectangle(0, 0, _final.Width, _final.Height), Color.White);
@@ -424,7 +429,12 @@ public sealed class Gunsight
         }
         // Clouds: camera-facing billboards from the same field the map uses, only those inside the view box.
         var camPx = new Vector2(camPos.X, camPos.Z) * World.PxPerFoot;
-        CloudField.Query(camPx, Box * World.PxPerFoot, camPos.Y, Box, _puffs);
+        CloudsDrawn = 0;
+        CloudFill = 0f;
+        if (ShowClouds) CloudField.Query(camPx, Box * World.PxPerFoot, camPos.Y, Box, _puffs);
+        else _puffs.Clear();
+        var viewTan = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
+        var viewAspect = (float)_final.Width / MathF.Max(1f, _final.Height);
         _puffs.Sort((a, b) => (World.ToFt(b.Pos, b.Height) - camPos).LengthSquared().CompareTo((World.ToFt(a.Pos, a.Height) - camPos).LengthSquared()));
         foreach (var pf in _puffs)
         {
@@ -436,6 +446,10 @@ public sealed class Gunsight
             if (alpha <= 0.01f) continue;
             var halfW = 256f * pf.Size / World.PxPerFoot / 2f; // sprite world px -> feet
             var halfH = halfW * 160f / 256f;
+            // How much of the view this quad covers (the view at its distance is 2 d tan wide by that over the aspect high).
+            var along = Vector3.Dot(c, fwd);
+            CloudsDrawn++;
+            CloudFill += MathF.Min(50f, 4f * halfW * halfH / (4f * along * along * viewTan * viewTan / viewAspect));
             AddBillboard(_cloudTex[pf.Variant], dist, c, rightV, upV, halfW, halfH, 0f, false, new Vector4(0f, 0f, 1f, 1f),
                 new Color(alpha, alpha, alpha, alpha)); // premultiplied white
         }
