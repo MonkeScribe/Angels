@@ -16,7 +16,6 @@ public class Game1 : Game
     // Mouse steering: constant turn rate. The plane banks fully toward the cursor's bearing unless
     // it is already within ~HeadingSeekRef of it, so small corrections turn as hard as big ones.
     private const float HeadingSeekRef = 0.15f;  // rad of heading error that saturates to full bank
-    private const float BankResponse = 0.18f;    // fraction of the bank gap closed per tick
     private const float DeadzonePx = 20f;
     private const float PxPerFoot = 1.2f;        // screen px per ft of ground travel, at 720p
 
@@ -114,7 +113,7 @@ public class Game1 : Game
     private Aircraft _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
-    private Spitfire _spitfire;
+    private SpitfireSprite _spitfire;
 
     private readonly World _worldModel = new();  // the aircraft in the world (World.cs); the player's is Player
     private readonly PlayerPilot _pilot = new(); // the player as a pilot: keys and mouse -> the aircraft's control inputs
@@ -176,7 +175,7 @@ public class Game1 : Game
         _w4 = new RenderTarget2D(GraphicsDevice, vp0.Width / 4, vp0.Height / 4);
         _w8 = new RenderTarget2D(GraphicsDevice, vp0.Width / 8, vp0.Height / 8);
         _grass = Art.Grass(GraphicsDevice);
-        _spitfire = new Spitfire(GraphicsDevice, _pixel);
+        _spitfire = new SpitfireSprite(GraphicsDevice, _pixel);
         _tree = Art.Tree(GraphicsDevice);
         _clouds = new[] { Art.Cloud(GraphicsDevice, 11), Art.Cloud(GraphicsDevice, 23), Art.Cloud(GraphicsDevice, 37) };
         _houses = new[]
@@ -304,7 +303,7 @@ public class Game1 : Game
 
     // The targeting box of a traffic plane: one box over the whole sprite (96 px, nose up, centred on 48,48), from
     // wingtip to wingtip and nose to tail, in sprite px. Hovering it tells the plane to turn and pitch at the target.
-    // This is separate from the hit boxes that rounds are tested against (see each aircraft's parts, DamageTuning.Fighter in Damage.cs, and the HITBOXES view).
+    // This is separate from the hit boxes that rounds are tested against (see each aircraft's parts, Spitfire.HitBoxes, and the HITBOXES view).
     private const float BoxX0 = -46f, BoxY0 = -42f, BoxX1 = 46f, BoxY1 = 40f;
     private const float HoverPadPx = 4f;             // sprite px of slack round the box, so the plane is easy to hover
 
@@ -360,11 +359,11 @@ public class Game1 : Game
         var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
         // Where each muzzle is on the map, from the sprite as it is drawn (it is drawn bigger than life), so the round
         // starts at the barrel tip on screen.
-        var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * Spitfire.ArtScale / GroundZoom;
+        var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * SpitfireSprite.ArtScale / GroundZoom;
         float ch = MathF.Cos(_fm.Heading), sh = MathF.Sin(_fm.Heading), bankSq = MathF.Cos(_fm.Bank * 0.6f);
         var mapMuzzles = new Vector2[Guns.GunCount];
         var view = PlayerView(out _);
-        var kws = kw / Spitfire.ArtScale * SpriteSphere.MapScale;   // world px per px of the sphere's sprite
+        var kws = kw / SpitfireSprite.ArtScale * SpriteSphere.MapScale;   // world px per px of the sphere's sprite
         for (var g = 0; g < Guns.GunCount; g++)
         {
             if (_sphereSprite)
@@ -375,7 +374,7 @@ public class Game1 : Game
                 mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z, -m.X, m.Y) + _playerSphere.MuzzleShift) * kws;
                 continue;
             }
-            var sp = Guns.MuzzleSpritePx[g] - Spitfire.Origin;
+            var sp = Guns.MuzzleSpritePx[g] - SpitfireSprite.Origin;
             var off = new Vector2(sp.X * bankSq, sp.Y) * kw;
             mapMuzzles[g] = _pos + new Vector2(off.X * ch - off.Y * sh, off.X * sh + off.Y * ch);
         }
@@ -818,7 +817,6 @@ public class Game1 : Game
         // The player's aircraft flies a tick: the pilot (keys, and the bank wanted from the mouse) sets its control inputs,
         // then its engine, damage and flight model do the rest and it moves (Aircraft.Step).
         _pilot.Bank = targetBank / FlightModel.MaxBank;
-        Player.BankResponse = BankResponse;
         Player.Step(_fx, _rng);
         if (kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
 
@@ -890,14 +888,14 @@ public class Game1 : Game
         if (_phase != Phase.Wrecked)
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
+            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * SpitfireSprite.ArtScale;
             var shadowAt = centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s;
             if (_sphereSprite)
             {
                 // The sprite sphere: the picture for how the plane is turned (heading, pitch and bank all show in it).
                 var view = PlayerView(out var propBehind);
-                var sc = ps / Spitfire.ArtScale * SpriteSphere.MapScale;
-                Spitfire.DrawSphereShadow(_sb, _playerSphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
+                var sc = ps / SpitfireSprite.ArtScale * SpriteSphere.MapScale;
+                SpitfireSprite.DrawSphereShadow(_sb, _playerSphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
                 _spitfire.DrawSphere(_sb, _playerSphere, view, propBehind, centre, sc, Color.White);
                 if (_dmg.OnFire) DrawFire(_playerSphere, view, centre, sc, _dmg.FireStrength, 0);
             }
@@ -1419,7 +1417,7 @@ public class Game1 : Game
         var engCol = _dmg.EngineState == PartState.Black ? new Color(90, 90, 90) : DamageModel.StateColor(_dmg.EngineState);
         Row(line++, "ENGINE", $"{eng * 100f:0}% POWER", eng, engCol);
         Row(line++, "FUEL", _dmg.Leaks > 0 ? $"LEAK X{_dmg.Leaks}  {_dmg.FuelGal:0} GAL" : $"{_dmg.FuelGal:0} GAL",
-            _dmg.FuelGal / DamageTuning.FuelCapacityGal, _dmg.Leaks > 0 ? new Color(255, 140, 40) : new Color(120, 200, 255));
+            _dmg.FuelGal / Player.Airframe.FuelCapacityGal, _dmg.Leaks > 0 ? new Color(255, 140, 40) : new Color(120, 200, 255));
         if (_hudBars)
         {
             var ias = _fm.IasMph;

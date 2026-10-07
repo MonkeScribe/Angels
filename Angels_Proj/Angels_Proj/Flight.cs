@@ -6,8 +6,8 @@ namespace Angels_Proj;
 /// <summary>
 /// Point-mass flight model, in real units (feet, slugs, lb, ft/s), stepped at a fixed 60 ticks/s. It flies whatever
 /// Airframe it is given (Aircraft.cs): performance is not scripted but falls out of that airframe's thrust, drag, lift
-/// and limits and the air density, so the same control inputs do different things in different aircraft. The default
-/// airframe is a Spitfire Mk IX, calibrated against the real aircraft (see Airframe).
+/// and limits and the air density, so the same control inputs do different things in different aircraft. The
+/// airframe comes from the aircraft type (see Spitfire).
 /// Horizontal steering (bank/heading) keeps Skyward's arcade turn model.
 /// </summary>
 public sealed class FlightModel
@@ -69,9 +69,9 @@ public sealed class FlightModel
     public float GroundSpeed => Speed * MathF.Cos(Gamma); // ft/s
     public bool Overspeed => IasMph > Airframe.VneMph;
 
-    public FlightModel(Airframe airframe = null)
+    public FlightModel(Airframe airframe)
     {
-        Airframe = airframe ?? new Airframe();
+        Airframe = airframe;
         Atmosphere(Altitude, out Rho, out SoundSpeed);
         Speed = 270f / Mph; // roughly level cruise at 55% throttle
     }

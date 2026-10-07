@@ -53,16 +53,8 @@ public static class DamageTuning
 
     public const float MaxHp = 100f;
 
-    /// <summary>Subtracted from every roll that hits the part. Order: Engine, Canopy, LeftWing, RightWing, Tail, Fuselage.</summary>
-    public static readonly float[] Armor = { 4f, 0f, 1f, 1f, 0.5f, 2f };
-
-    /// <summary>What's left after armour is multiplied by this before it comes off the part's hit points (1 = as is).
-    /// Same order as Armor.</summary>
-    public static readonly float[] DamageMultiplier = { 1f, 1f, 1f, 1f, 1f, 1f };
-
-    /// <summary>How hard each part is to destroy outright, 0-100 (see the class notes). Same order as Armor. With the .303's
-    /// Destructive of 30: engine and canopy have no floor, the tail's is 10 hp, wings and fuselage 25 hp.</summary>
-    public static readonly float[] Integrity = { 30f, 10f, 55f, 55f, 40f, 55f };
+    // Each part's armour (subtracted from every roll that hits it), integrity (see the class notes) and damage
+    // multiplier belong to the aircraft type: see Spitfire.
 
     /// <summary>Below the floor, damage is multiplied by a factor that slides from BelowFloorScale (at the floor) down to
     /// MinScale (at zero hit points), so a weak weapon keeps chipping away but ever more slowly.</summary>
@@ -74,9 +66,8 @@ public static class DamageTuning
 
     // ---------------------------------------------------------------- engine, fuel and fire
 
-    /// <summary>Engine power (thrust) is the engine's hit points as a fraction: 50 hp, half the thrust. No fuel, none.</summary>
-    public static float FuelCapacityGal = 85f;                 // Spitfire Mk I: 48 + 37 imperial gallons
-    public static float FuelBurnIdleGalPerMin = 0.3f, FuelBurnFullGalPerMin = 1.5f;   // at idle and full throttle
+    // Engine power (thrust) is the engine's hit points as a fraction: 50 hp, half the thrust; no fuel, none. How much fuel
+    // an aircraft carries and burns is its type's (Airframe).
 
     /// <summary>Each time the engine enters yellow and then orange it rolls this chance of springing a fuel leak.</summary>
     public static float LeakChance = 0.33f;
@@ -104,18 +95,7 @@ public static class DamageTuning
         public HitBox(Vector3 min, Vector3 max, Part part) { Min = min; Max = max; Part = part; }
     }
 
-    /// <summary>A single-engined fighter laid out like a Spitfire: 30 ft long, 37 ft span, origin about at the wing root.</summary>
-    public static readonly HitBox[] Fighter =
-    {
-        new(new Vector3(-2.6f, -2.4f, -16f), new Vector3(2.6f, 2.4f, -6.5f), Part.Engine),        // nose to firewall
-        new(new Vector3(-1.3f, 1.8f, -2f), new Vector3(1.3f, 4.2f, 3f), Part.Canopy),             // cockpit glazing
-        new(new Vector3(-2.5f, -2.6f, -6.5f), new Vector3(2.5f, 2.2f, 12.8f), Part.Fuselage),     // firewall to tail
-        new(new Vector3(-1.2f, -1.4f, 12.8f), new Vector3(1.2f, 1.4f, 16.8f), Part.Fuselage),     // tail cone
-        new(new Vector3(-18.6f, -1f, -4.2f), new Vector3(-2.5f, 1f, 4.7f), Part.LeftWing),
-        new(new Vector3(2.5f, -1f, -4.2f), new Vector3(18.6f, 1f, 4.7f), Part.RightWing),
-        new(new Vector3(-5.4f, -0.3f, 13f), new Vector3(5.4f, 0.7f, 16.8f), Part.Tail),          // tailplane and elevators
-        new(new Vector3(-0.5f, 0.7f, 12.8f), new Vector3(0.5f, 7f, 16.8f), Part.Tail),           // fin and rudder
-    };
+    // Each aircraft type has its own hit boxes: see Spitfire.
 }
 
 /// <summary>The damage model's rules (the numbers are in DamageTuning).</summary>

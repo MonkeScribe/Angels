@@ -9,8 +9,11 @@ namespace Angels_Proj;
 /// parts and everything about their damage (hit points, state, armour, hit boxes), its fuel, leaks and engine fire, how
 /// it is drawn, and the pilot flying it. Look at an aircraft and its whole condition is here. Each tick the pilot sets
 /// the controls and the aircraft does what its flight model and damage make of them.
+///
+/// This holds no numbers of its own: what an aircraft is (its airframe, limits, hit boxes, armour) comes from its type,
+/// a class built on this one (Spitfire), which hands them over when it is made.
 /// </summary>
-public sealed class Aircraft
+public abstract class Aircraft
 {
     public Vector2 Pos;                                   // world px (map)
     public readonly FlightModel Flight;
@@ -19,8 +22,6 @@ public sealed class Aircraft
     public bool IsPlayer;
     public bool Crashed;                                  // hit the ground (the only thing that ends an aircraft)
     public int Salt;                                      // staggers its fire animation from the others'
-    /// <summary>How quickly it rolls to the bank its pilot asks for: the fraction of the gap closed each tick.</summary>
-    public float BankResponse = 0.18f;
 
     // ---------------------------------------------------------------- parts
 
@@ -33,7 +34,7 @@ public sealed class Aircraft
 
     // ---------------------------------------------------------------- fuel, leaks, fire
 
-    public float FuelGal = DamageTuning.FuelCapacityGal;
+    public float FuelGal;
     public int Leaks;
     public bool OnFire;
     private PartState _engineSeen = PartState.Undamaged;   // the engine band last dealt with, so each band rolls once
@@ -73,20 +74,24 @@ public sealed class Aircraft
         }
     }
 
-    /// <param name="hitBoxes">The type's hit boxes (each tagged with its part); a single-engined fighter's by default.</param>
-    public Aircraft(FlightModel flight, Pilot pilot, SpriteSphere sphere = null, DamageTuning.HitBox[] hitBoxes = null)
+    /// <summary>Made by an aircraft type with what it is.</summary>
+    /// <param name="airframe">Its airframe and limits, which its flight model flies by.</param>
+    /// <param name="hitBoxes">Its hit boxes, each tagged with its part.</param>
+    /// <param name="armor">Each part's armour, integrity and damage multiplier, in Part order.</param>
+    protected Aircraft(Airframe airframe, DamageTuning.HitBox[] hitBoxes, float[] armor, float[] integrity, float[] damageMultiplier,
+        Pilot pilot, SpriteSphere sphere)
     {
-        Flight = flight;
+        Flight = new FlightModel(airframe);
+        FuelGal = airframe.FuelCapacityGal;
         Pilot = pilot;
         Sphere = sphere;
-        hitBoxes ??= DamageTuning.Fighter;
         Parts = new AircraftPart[DamageModel.PartCount];
         for (var i = 0; i < Parts.Length; i++)
         {
             var kind = (Part)i;
             var boxes = new List<DamageTuning.HitBox>();
             foreach (var b in hitBoxes) if (b.Part == kind) boxes.Add(b);
-            Parts[i] = new AircraftPart(kind, boxes.ToArray());
+            Parts[i] = new AircraftPart(kind, boxes.ToArray(), armor[i], integrity[i], damageMultiplier[i]);
         }
         Engine = this[Part.Engine]; Canopy = this[Part.Canopy]; LeftWing = this[Part.LeftWing];
         RightWing = this[Part.RightWing]; Tail = this[Part.Tail]; Fuselage = this[Part.Fuselage];
@@ -96,7 +101,7 @@ public sealed class Aircraft
     public Vector3 EngineFt()
     {
         World.Basis(Flight.Heading, Flight.Gamma, Flight.Bank, out _, out var u, out var f);
-        return PositionFt + f * 11f - u * 0.5f;
+        return PositionFt + f * Airframe.EngineAheadFt - u * 0.5f;
     }
 
     // ---------------------------------------------------------------- damage
@@ -142,7 +147,7 @@ public sealed class Aircraft
         var throttle = Flight.Throttle;
         if (FuelGal > 0f)
         {
-            var burn = EnginePower > 0f ? MathHelper.Lerp(DamageTuning.FuelBurnIdleGalPerMin, DamageTuning.FuelBurnFullGalPerMin, throttle) : 0f;
+            var burn = EnginePower > 0f ? MathHelper.Lerp(Airframe.FuelBurnIdleGalPerMin, Airframe.FuelBurnFullGalPerMin, throttle) : 0f;
             FuelGal = MathF.Max(0f, FuelGal - (burn + Leaks * DamageTuning.LeakGalPerMin) * dt / 60f);
         }
         if (!OnFire) return;
@@ -167,7 +172,7 @@ public sealed class Aircraft
             World.Basis(Flight.Heading, Flight.Gamma, Flight.Bank, out _, out _, out var f);
             fx.EngineTrail(EngineFt() - f * 4f, -f, SmokeStrength, FireStrength, Leaks, IsPlayer);
         }
-        Flight.Step(BankResponse, rng);
+        Flight.Step(Airframe.RollResponse, rng);
         if (Flight.GroundHit && !IsPlayer) Crashed = true;   // (the game handles the player's landings and crashes)
         var dir = new Vector2(MathF.Sin(Flight.Heading), -MathF.Cos(Flight.Heading));
         Pos += dir * Flight.GroundSpeed * World.PxPerFoot / 60f;
@@ -176,7 +181,7 @@ public sealed class Aircraft
 
 /// <summary>
 /// One part of one aircraft: what it is, its hit points and so its state, its armour, integrity and damage multiplier
-/// (from DamageTuning, held here so a part, or an aircraft type, can differ), and its hit boxes in the aircraft's frame.
+/// (given by its aircraft type), and its hit boxes in the aircraft's frame.
 /// </summary>
 public sealed class AircraftPart
 {
@@ -185,13 +190,13 @@ public sealed class AircraftPart
     public float Armor, Integrity, DamageMultiplier;
     public readonly DamageTuning.HitBox[] Boxes;
 
-    public AircraftPart(Part kind, DamageTuning.HitBox[] boxes)
+    public AircraftPart(Part kind, DamageTuning.HitBox[] boxes, float armor, float integrity, float damageMultiplier)
     {
         Kind = kind;
         Boxes = boxes;
-        Armor = DamageTuning.Armor[(int)kind];
-        Integrity = DamageTuning.Integrity[(int)kind];
-        DamageMultiplier = DamageTuning.DamageMultiplier[(int)kind];
+        Armor = armor;
+        Integrity = integrity;
+        DamageMultiplier = damageMultiplier;
     }
 
     public PartState State => DamageModel.StateOf(Hp);
@@ -200,46 +205,40 @@ public sealed class AircraftPart
 }
 
 /// <summary>
-/// What an aircraft type is made of and can stand, for the flight model to fly: its airframe (weight, wing, drag, engine
-/// and propeller) and its limits (speed, g, stall behaviour, controls). Each aircraft carries one (Aircraft.Airframe),
+/// What an aircraft type is made of and can stand, for the flight model to fly: its airframe (weight, wing, drag, engine,
+/// propeller and fuel) and its limits (speed, g, stall behaviour, controls). Each aircraft carries one (Aircraft.Airframe)
 /// and its flight model works everything out from it, so a different airframe flies differently on the same inputs.
-/// These are a Spitfire Mk IX's: level speed ~403 mph TAS at ~30,000 ft, ~4,100 ft/min climb at sea level falling to 0
-/// at 51,550 ft, stall ~86 mph, never-exceed 450 mph IAS, dive to ~Mach 0.87 from altitude.
+/// It has no values of its own: each aircraft type fills one in (see Spitfire).
 /// </summary>
 public sealed class Airframe
 {
-    public string Name = "SPITFIRE";
+    public string Name;
 
     // ---- Airframe ----
-    public float WeightLb = 7400f, WingArea = 242f, Span = 36.83f;   // lb, sq ft, ft
-    public float CD0 = 0.0195f, OswaldE = 0.55f, CLmax = 1.6f;       // zero-lift drag, span efficiency, max lift coefficient
-    public float PropEff = 0.82f, StaticThrustCapLb = 3500f;         // propeller efficiency; the most thrust it gives at low speed
-    public float IdlePropDragCD = 0.006f;                            // a throttled-back propeller's drag
-
-    /// <summary>Engine power (hp) at full throttle against altitude (ft). Chosen so the climb rates match the real
-    /// aircraft; beyond the table power falls away quickly.</summary>
-    public (float alt, float hp)[] PowerTable =
-    {
-        (0, 1491), (5000, 1477), (10000, 1440), (15000, 1408), (20000, 1353), (25000, 1290),
-        (28000, 1231), (30000, 1180), (35000, 1036), (40000, 843), (43000, 767), (47000, 780),
-        (51550, 840), (56000, 600), (65000, 150),
-    };
+    public float WeightLb, WingArea, Span;          // lb, sq ft, ft
+    public float CD0, OswaldE, CLmax;               // zero-lift drag, span efficiency, max lift coefficient
+    public float PropEff, StaticThrustCapLb;        // propeller efficiency; the most thrust it gives at low speed
+    public float IdlePropDragCD;                    // a throttled-back propeller's drag
+    /// <summary>Engine power (hp) at full throttle against altitude (ft); beyond the table it falls away.</summary>
+    public (float alt, float hp)[] PowerTable;
+    public float FuelCapacityGal;                   // imperial gallons
+    public float FuelBurnIdleGalPerMin, FuelBurnFullGalPerMin;   // at idle and full throttle
+    public float EngineAheadFt;                     // where the engine sits, ahead of the aircraft's origin
 
     public float AspectRatio => Span * Span / WingArea;
 
     // ---- Limits ----
-    public float VneMph = 450f;              // never-exceed, indicated
-    public float WaveDragK = 3f;             // compressibility drag above Mach 0.75
-    public float OverspeedDragK = 0.3f;      // structural-limit drag above Vne
-    // Pitch-axis g limits. Level flight is 1 g, so 7 up and -5 down are the same 6 g of change either way: pulling and
-    // pushing the nose have equal authority.
-    public float MaxNPos = 7.0f, MaxNNeg = 5.0f;
-    public float NTurnMax = 7f, NStruct = 12f;     // g at full bank at reference speed; structural limit
-    public float QRef = 160f;                      // dynamic pressure (psf) of ~250 mph at sea level
-    public float StallDragCD = 0.12f;              // separated flow when the wing is over-pulled
-    public float RudderRate = 0.0015f;             // rad per tick of flat yaw at full rudder (about 5 deg/s)
-    public float RudderSlipDragCD = 0.012f;        // extra drag at full rudder
-    public float StallNoseDropDegS = 75f;          // how fast a fully stalled nose falls toward the ground
-    public float MaxClimbDeg = 60f, MaxDiveDeg = 90f;   // steepest flight path the pilot can command
-    public float CeilingFt = 51550f;
+    public float VneMph;                            // never-exceed, indicated
+    public float WaveDragK;                         // compressibility drag above Mach 0.75
+    public float OverspeedDragK;                    // structural-limit drag above Vne
+    public float MaxNPos, MaxNNeg;                  // pitch-axis g limits, up and down
+    public float NTurnMax, NStruct;                 // g at full bank at reference speed; structural limit
+    public float QRef;                              // dynamic pressure (psf) the turn g is referenced to
+    public float StallDragCD;                       // separated flow when the wing is over-pulled
+    public float RudderRate;                        // rad per tick of flat yaw at full rudder
+    public float RudderSlipDragCD;                  // extra drag at full rudder
+    public float StallNoseDropDegS;                 // how fast a fully stalled nose falls toward the ground
+    public float MaxClimbDeg, MaxDiveDeg;           // steepest flight path the pilot can command
+    public float CeilingFt;
+    public float RollResponse;                      // how quickly it rolls to the bank asked for: fraction of the gap per tick
 }
