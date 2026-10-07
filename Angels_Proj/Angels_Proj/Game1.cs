@@ -246,19 +246,6 @@ public class Game1 : Game
     private void AddParticle(Vector2 pos, Vector2 vel, float life, float size, Color color) =>
         _particles.Add(new Particle { Pos = pos, Vel = vel, Life = life, MaxLife = life, Size = size, Color = color });
 
-    /// <summary>Whether any of a plane is on the screen: inside the view box, and its sprite (about a wingspan across) at
-    /// least partly inside the window, with the camera where it is now.</summary>
-    private bool OnScreen(Aircraft p)
-    {
-        var f = DistFactor(p.Altitude);
-        if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) return false;
-        var vp = GraphicsDevice.Viewport;
-        var k = Scale * GroundZoom / f;
-        var at = PlaneScreen() + (p.Pos - _pos) * k;
-        var r = p.Airframe.Span * 0.5f * World.PxPerFoot * k;
-        return at.X > -r && at.X < vp.Width + r && at.Y > -r && at.Y < vp.Height + r;
-    }
-
     /// <summary>The nearest plane under the gunsight's centre dot (straight down the nose), within the view box: the dot
     /// counts as on it within DotRadiusSpans of its wingspan of its centre.</summary>
     private Aircraft PlaneOnDot(Vector3 camFt, Vector3 forward)
@@ -679,8 +666,8 @@ public class Game1 : Game
                 if (IsActive) Mouse.SetPosition(_panStart.X, _panStart.Y);
             }
             // With the aimer up, the camera follows the target: it pans just far enough to keep it on screen, within the same
-            // limit as the manual pan (the plane stays on screen; the pan is held to that below). The target is only let
-            // go once it is right off the screen (see OnScreen): then the aimer fades out and the camera recentres.
+            // limit as the manual pan (the plane stays on screen). A target beyond that is let go: the aimer fades out
+            // and the camera recentres.
             var panMargin0 = PanMarginPx * Scale;
             var following = false;
             if (_tracked != null && _phase == Phase.Flying && _worldModel.Others.Contains(_tracked))
@@ -690,9 +677,14 @@ public class Game1 : Game
                 var want = new Vector2(
                     t0.X < panMargin0 ? t0.X - panMargin0 : t0.X > vp.Width - panMargin0 ? t0.X - (vp.Width - panMargin0) : 0f,
                     t0.Y < panMargin0 ? t0.Y - panMargin0 : t0.Y > vp.Height - panMargin0 ? t0.Y - (vp.Height - panMargin0) : 0f);
-                following = true;
-                _pan += (want - _pan) * PanFollow;
-                _panReleaseLen = 0f;   // no steering blend while following: the mouse is aiming, not steering
+                if (MathF.Abs(want.X) > vp.Width / 2f - panMargin0 || MathF.Abs(want.Y) > vp.Height / 2f - panMargin0)
+                    _tracked = null;   // out of panning range
+                else
+                {
+                    following = true;
+                    _pan += (want - _pan) * PanFollow;
+                    _panReleaseLen = 0f;   // no steering blend while following: the mouse is aiming, not steering
+                }
             }
             if (!following)
             {
@@ -769,10 +761,10 @@ public class Game1 : Game
         _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
         if (_hovered != null && _showHitboxes) SpriteZones(_hovered, PlaneScreen(), _hoverZones); // drawn in the HITBOXES debug view only
-        // The aimer holds its target until the target is right off the screen, even if it leaves the sight's view; a
-        // target is first picked with the mouse (on a plane the sight can see). While the sight is showing, putting its
-        // centre dot on another plane switches to that one.
-        if (_tracked == null || _phase != Phase.Flying || !_worldModel.Others.Contains(_tracked) || !OnScreen(_tracked))
+        // The aimer holds its target while the sight can see it; a target is first picked with the mouse (on a plane the
+        // sight can see). While the sight is showing, putting its centre dot on another plane switches to that one.
+        if (_tracked == null || _phase != Phase.Flying || !_worldModel.Others.Contains(_tracked) ||
+            !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
         if (_phase == Phase.Flying && (_tracked != null || _sightAlpha > 0.01f) && PlaneOnDot(camFt, sf) is { } onDot)
             _tracked = onDot;
