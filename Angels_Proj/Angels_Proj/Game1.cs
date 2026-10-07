@@ -103,7 +103,10 @@ public class Game1 : Game
     private bool InTest => _test != TestMode.None;
     private Vector3 _testCloudFt;                        // the cloud a cloud test flies through (world feet)
     // Debug menu, and the PERF overlay's timings.
-    private readonly DebugMenu _menu = new();
+    private readonly MenuPanel _menu = new("DEBUG", false);
+    private readonly MenuPanel _options = new("OPTIONS", true);   // Esc: pauses the game
+    private bool _graphicsHigh = true;                            // the graphics setting: HIGH or LOW
+    private const int LowSmokeBudget = 160;                       // LOW: most smoke puffs drawn at once in the gunsight
     private bool _menuOpen { get => _menu.Open; set => _menu.Open = value; }
     private readonly Perf _perf = new();
     private bool _showPerf;
@@ -179,6 +182,8 @@ public class Game1 : Game
         _art = new AircraftArt(_pixel, _effects);
         _gunsight = new Gunsight(GraphicsDevice, _sb, _effects);
         BuildMenu();
+        BuildOptions();
+        ApplyGraphics();
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
         _grass = Art.Grass(GraphicsDevice);
@@ -461,6 +466,24 @@ public class Game1 : Game
         }
     }
 
+    /// <summary>The options menu (Esc).</summary>
+    private void BuildOptions()
+    {
+        var o = _options;
+        o.Section("SETTINGS");
+        o.Add("GRAPHICS", () => _graphicsHigh ? "HIGH" : "LOW", () => { _graphicsHigh = !_graphicsHigh; ApplyGraphics(); });
+        o.Section("");
+        o.Add("RESUME", null, () => _options.Open = false);
+        o.Add("QUIT", null, Exit);
+    }
+
+    /// <summary>Puts the graphics setting into effect. HIGH: every smoke puff drawn; LOW: the gunsight draws at most
+    /// LowSmokeBudget of them.</summary>
+    private void ApplyGraphics()
+    {
+        _gunsight.SmokeBudget = _graphicsHigh ? 0 : LowSmokeBudget;
+    }
+
     /// <summary>The debug menu's options, by section.</summary>
     private void BuildMenu()
     {
@@ -472,25 +495,25 @@ public class Game1 : Game
             _fm.VerticalRateScale = _arcade ? 2f : 1f; // arcade: altitude gain and loss twice as fast
         });
         m.Section("VIEW");
-        m.Add("HUD BARS", () => DebugMenu.OnOff(_hudBars), () => _hudBars = !_hudBars);
-        m.Add("HITBOXES", () => DebugMenu.OnOff(_showHitboxes), () => _showHitboxes = !_showHitboxes);
-        m.Add("FPS", () => DebugMenu.OnOff(_showFps), () => _showFps = !_showFps);
-        m.Add("PERF", () => DebugMenu.OnOff(_showPerf), () => _showPerf = !_showPerf);
+        m.Add("HUD BARS", () => MenuPanel.OnOff(_hudBars), () => _hudBars = !_hudBars);
+        m.Add("HITBOXES", () => MenuPanel.OnOff(_showHitboxes), () => _showHitboxes = !_showHitboxes);
+        m.Add("FPS", () => MenuPanel.OnOff(_showFps), () => _showFps = !_showFps);
+        m.Add("PERF", () => MenuPanel.OnOff(_showPerf), () => _showPerf = !_showPerf);
         m.Section("RENDER");
-        m.Add("MAP CLOUDS", () => DebugMenu.OnOff(_cloudsOn), () => _cloudsOn = !_cloudsOn);
-        m.Add("CLOUD SHADOWS", () => DebugMenu.OnOff(_cloudShadows), () => _cloudShadows = !_cloudShadows);
-        m.Add("SIGHT CLOUDS", () => DebugMenu.OnOff(_gunsight.ShowClouds), () => _gunsight.ShowClouds = !_gunsight.ShowClouds);
-        m.Add("SIGHT BLUR", () => DebugMenu.OnOff(_gunsight.Blur), () => _gunsight.Blur = !_gunsight.Blur);
-        m.Add("SIGHT SMOKE", () => DebugMenu.OnOff(_gunsight.ShowSmoke), () => _gunsight.ShowSmoke = !_gunsight.ShowSmoke);
+        m.Add("MAP CLOUDS", () => MenuPanel.OnOff(_cloudsOn), () => _cloudsOn = !_cloudsOn);
+        m.Add("CLOUD SHADOWS", () => MenuPanel.OnOff(_cloudShadows), () => _cloudShadows = !_cloudShadows);
+        m.Add("SIGHT CLOUDS", () => MenuPanel.OnOff(_gunsight.ShowClouds), () => _gunsight.ShowClouds = !_gunsight.ShowClouds);
+        m.Add("SIGHT BLUR", () => MenuPanel.OnOff(_gunsight.Blur), () => _gunsight.Blur = !_gunsight.Blur);
+        m.Add("SIGHT SMOKE", () => MenuPanel.OnOff(_gunsight.ShowSmoke), () => _gunsight.ShowSmoke = !_gunsight.ShowSmoke);
         m.Add("SMOKE BUDGET", () => _gunsight.SmokeBudget > 0 ? _gunsight.SmokeBudget.ToString() : "NONE", () =>
             _gunsight.SmokeBudget = _gunsight.SmokeBudget switch { 0 => 80, 80 => 160, 160 => 320, _ => 0 });
         m.Section("DAMAGE");
         m.Add("HIT OWN ENGINE", () => $"{MathF.Ceiling(_dmg.EngineHp):0} HP", () => _dmg.DamagePart(Part.Engine, 10f, _rng));
         m.Section("TESTS");
-        m.Add("GUN TEST", () => DebugMenu.OnOff(_test == TestMode.Gun), () => { if (_test == TestMode.Gun) Reset(); else StartGunTest(); });
-        m.Add("FPS: FOLLOW THROUGH CLOUD", () => DebugMenu.OnOff(_test == TestMode.FollowThroughCloud),
+        m.Add("GUN TEST", () => MenuPanel.OnOff(_test == TestMode.Gun), () => { if (_test == TestMode.Gun) Reset(); else StartGunTest(); });
+        m.Add("FPS: FOLLOW THROUGH CLOUD", () => MenuPanel.OnOff(_test == TestMode.FollowThroughCloud),
             () => { if (_test == TestMode.FollowThroughCloud) Reset(); else { StartCloudTest(TestMode.FollowThroughCloud); _showPerf = true; } });
-        m.Add("FPS: CLOUD INTO VIEW", () => DebugMenu.OnOff(_test == TestMode.CloudIntoView),
+        m.Add("FPS: CLOUD INTO VIEW", () => MenuPanel.OnOff(_test == TestMode.CloudIntoView),
             () => { if (_test == TestMode.CloudIntoView) Reset(); else { StartCloudTest(TestMode.CloudIntoView); _showPerf = true; } });
         m.Add("SPAWN TARGETS", null, () =>
         {
@@ -514,6 +537,17 @@ public class Game1 : Game
         _kb = Keyboard.GetState();
         var kb = _kb;
         var m = Mouse.GetState();
+        if (_options.Open)
+        {
+            // The options menu pauses the game; Esc (or RESUME) carries on.
+            IsMouseVisible = true;
+            _mouseAim = false;
+            _options.Update(Pressed, m, m.LeftButton == ButtonState.Pressed && !_prevLeft, GraphicsDevice.Viewport.Bounds, Scale);
+            _lastWheel = m.ScrollWheelValue;
+            _prevLeft = m.LeftButton == ButtonState.Pressed;
+            base.Update(gameTime);
+            return;
+        }
         TrackSecretCode();
         if (_menuOpen)
         {
@@ -527,8 +561,14 @@ public class Game1 : Game
             return;
         }
         _prevLeft = m.LeftButton == ButtonState.Pressed;
-        // A fresh press only: the press that closed the debug menu is still held on the next tick and mustn't quit the game.
-        if (Pressed(Keys.Escape)) Exit();
+        // Esc opens the options menu. A fresh press only: the press that closed a menu is still held on the next tick and
+        // mustn't open it again.
+        if (Pressed(Keys.Escape))
+        {
+            _options.Open = true;
+            base.Update(gameTime);
+            return;
+        }
         if (Pressed(Keys.R)) Reset();
         if (InTest)
         {
@@ -1149,6 +1189,7 @@ public class Game1 : Game
         DrawFps();
         DrawPerf();
         _menu.Draw(_sb, _pixel, GraphicsDevice.Viewport.Bounds, Scale);
+        _options.Draw(_sb, _pixel, GraphicsDevice.Viewport.Bounds, Scale);
         _sb.End();
 
         base.Draw(gameTime);

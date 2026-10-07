@@ -68,7 +68,7 @@ public sealed class Gunsight
     /// <summary>Most smoke and mist puffs drawn at once (0 = no limit). Past it only every second (third...) puff is drawn,
     /// a little bigger and denser to make up for the others, which keeps a long trail seen end-on from being drawn
     /// hundreds of times over the same pixels.</summary>
-    public int SmokeBudget = 160;
+    public int SmokeBudget;      // set by the graphics setting (Game1.ApplyGraphics)
     public int SmokeSeen, SmokeDrawn, SpriteRuns;   // SpriteRuns: draw calls for the sprites, per slab
     public float SmokeFill;     // the smoke's quads added up, in whole views
     public float CloudFill;      // the clouds' quads added up, in whole views: how many times over they cover the sight

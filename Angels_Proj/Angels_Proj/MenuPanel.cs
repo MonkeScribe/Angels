@@ -7,12 +7,22 @@ using Microsoft.Xna.Framework.Input;
 namespace Angels_Proj;
 
 /// <summary>
-/// The debug menu: a plain panel down the left of the screen with its options grouped under section headings. Each
-/// option is a label, an optional value shown on the right, and what choosing it does; the game adds them (Add) so new
-/// features only need a line each. Arrow keys or the mouse to pick, Enter, Space or a click to choose, Esc to close.
+/// A menu panel (the debug menu, the options menu): a plain panel with a title and its options grouped under section
+/// headings. Each option is a label, an optional value shown on the right, and what choosing it does; the game adds
+/// them (Add) so new options only need a line each. Arrow keys or the mouse to pick, Enter, Space or a click to choose,
+/// Esc to close. Sits at the top left, or in the middle of a dimmed screen.
 /// </summary>
-public sealed class DebugMenu
+public sealed class MenuPanel
 {
+    private readonly string _title;
+    private readonly bool _centred;
+
+    public MenuPanel(string title, bool centred)
+    {
+        _title = title;
+        _centred = centred;
+    }
+
     private sealed class Item
     {
         public string Label;
@@ -55,7 +65,8 @@ public sealed class DebugMenu
         }
         int w = (6 + 4 + 6) * px + (labelChars + 4 + _valueChars) * 6 * px;
         int h = 18 * px + _items.Count * RowH(scale) + 14 * px;
-        return new Rectangle((int)(16 * scale), (int)(16 * scale), w, h);
+        return _centred ? new Rectangle(screen.X + (screen.Width - w) / 2, screen.Y + (screen.Height - h) / 2, w, h)
+            : new Rectangle((int)(16 * scale), (int)(16 * scale), w, h);
     }
 
     private Rectangle RowRect(Rectangle panel, float scale, int i)
@@ -97,13 +108,14 @@ public sealed class DebugMenu
         if (!Open) return;
         var px = Px(scale);
         var panel = PanelRect(screen, scale);
+        if (_centred) sb.Draw(pixel, screen, Color.Black * 0.45f);
         sb.Draw(pixel, panel, Panel);
         sb.Draw(pixel, new Rectangle(panel.X, panel.Y, panel.Width, 1), Edge);
         sb.Draw(pixel, new Rectangle(panel.X, panel.Bottom - 1, panel.Width, 1), Edge);
         sb.Draw(pixel, new Rectangle(panel.X, panel.Y, 1, panel.Height), Edge);
         sb.Draw(pixel, new Rectangle(panel.Right - 1, panel.Y, 1, panel.Height), Edge);
         var pad = 6 * px;
-        PixelFont.Draw(sb, pixel, "DEBUG", new Vector2(panel.X + pad, panel.Y + 5 * px), px, Title);
+        PixelFont.Draw(sb, pixel, _title, new Vector2(panel.X + pad, panel.Y + 5 * px), px, Title);
         sb.Draw(pixel, new Rectangle(panel.X + pad, panel.Y + 14 * px, panel.Width - 2 * pad, 1), Edge);
 
         for (var i = 0; i < _items.Count; i++)
