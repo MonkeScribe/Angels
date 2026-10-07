@@ -242,8 +242,8 @@ public abstract class Aircraft
     }
 
     /// <summary>Deals with each part the moment it is gone (once):
-    ///   engine   - blows up: an explosion that sets one random part touching it alight; it burns on, but its own
-    ///              fire never spreads after that;
+    ///   engine   - blows up: an explosion that destroys one random part touching it and sets it alight (so that
+    ///              part's own loss follows); the engine burns on, but its own fire never spreads after that;
     ///   fuselage - the airframe breaks: an explosion, it burns, and the aircraft noses over into a steep spiralling dive;
     ///   a wing   - the other wing's lift rolls it over: a spin toward the missing wing all the way down;
     ///   canopy   - the pilot is dead: nobody flies it, it holds its heading and the nose slowly sinks;
@@ -260,10 +260,13 @@ public abstract class Aircraft
                 case Part.Engine:
                     fx.Explosion(EngineFt(), 30f, IsPlayer);
                     p.OnFire = true;
-                    // The blast sets one part touching the engine alight, picked at random; after that the engine's own
-                    // fire stays in the nose.
+                    // The blast takes one part touching the engine with it, picked at random: that part is gone and on fire
+                    // (its loss is dealt with further on in this same pass: the parts after the engine). After that the
+                    // engine's own fire stays in the nose.
                     var near = DamageModel.Neighbours(Part.Engine);
-                    this[near[rng.Next(near.Length)]].OnFire = true;
+                    var blown = this[near[rng.Next(near.Length)]];
+                    blown.Hp = 0f;
+                    blown.OnFire = true;
                     break;
                 case Part.Fuselage:
                     fx.Explosion(FireFt(p), 40f, IsPlayer);
