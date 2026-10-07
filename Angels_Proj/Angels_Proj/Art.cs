@@ -41,29 +41,6 @@ public static class Art
         });
     }
 
-    /// <summary>Top-down house roof, 64x64: two gable halves around a ridge, with a chimney.</summary>
-    public static Texture2D House(GraphicsDevice gd, Color roof)
-    {
-        var dark = new Color((int)(roof.R * 0.75f), (int)(roof.G * 0.75f), (int)(roof.B * 0.75f));
-        return Make(gd, 64, 64, (x, y) =>
-        {
-            if (x < 6 || x > 57 || y < 10 || y > 53) // eaves shadow margin
-                return (x >= 4 && x <= 59 && y >= 8 && y <= 55) ? new Color(0, 0, 0, 70) : Color.Transparent;
-            if (x >= 40 && x <= 47 && y >= 16 && y <= 23) return new Color(110, 90, 80); // chimney
-            if (Math.Abs(x - 31.5f) < 1) return new Color(60, 40, 30);                  // ridge
-            return x < 32 ? roof : dark;
-        });
-    }
-
-    /// <summary>Top-down tree canopy, 48x48.</summary>
-    public static Texture2D Tree(GraphicsDevice gd) => Make(gd, 48, 48, (x, y) =>
-    {
-        var d = MathF.Sqrt((x - 23.5f) * (x - 23.5f) + (y - 23.5f) * (y - 23.5f));
-        if (d > 22) return Color.Transparent;
-        var lit = 1f - (x + y) / 140f;
-        return new Color((int)(25 + 30 * lit), (int)(80 + 60 * lit), (int)(35 + 30 * lit));
-    });
-
     /// <summary>Colour of the level plane (96x96 sprite space, nose up) at an offset from its centre.</summary>
     public static readonly Color PlayerBody = new(210, 60, 50);
 

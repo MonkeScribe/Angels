@@ -19,15 +19,12 @@ public class Game1 : Game
     private const float DeadzonePx = 20f;
     private const float PxPerFoot = 1.2f;        // screen px per ft of ground travel, at 720p
 
-    private const int Cell = 420;                 // scenery grid cell size (world px)
-
     // Camera: the further above the ground, the smaller everything on it looks.
     private const float GroundZoom = 0.55f, ZoomAltScaleFt = 4000f;
 
     // Crash rules.
     private const float SurvivableSinkFpm = 1000f, SurvivableSpeedMph = 200f; // gentle enough to skid in
     private const float SkidDecelFtS2 = 18f;                                  // belly friction
-    private const float HouseHeightFt = 40f, TreeHeightFt = 55f, HouseRadius = 60f, TreeRadius = 34f;
 
     // The mouse wheel points the nose: each notch swings it this much, the same either way, and when the wheel stops
     // the nose locks where it is. Scrolling fast is just more notches. W/S take over; middle click levels out.
@@ -63,25 +60,17 @@ public class Game1 : Game
         public Color Color;
     }
 
-    private struct Prop
-    {
-        public bool Tree;
-        public Vector2 Pos;
-        public float Scale, Rot;
-        public int House;
-    }
-
     private readonly GraphicsDeviceManager _graphics;
     private SpriteBatch _sb;
-    private Texture2D _pixel, _grass, _tree;
-    private Texture2D[] _houses, _clouds;
+    private Texture2D _pixel, _grass;
+    private Texture2D[] _clouds;
     private readonly Fx _fx = new();
     private EffectArt _effects;                 // fire animation and smoke sprites
     private float _time;                        // seconds of play, for animations
     private Traffic _traffic;                    // brings AI formations into the world and takes them away
     private readonly System.Collections.Generic.List<Aircraft> _craft = new(); // draw-sorted copy
     private Gunsight _gunsight;
-    private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
+    private RenderTarget2D _world;              // the ground layer, faded into the sky as we climb out of the view box
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
     private readonly Guns _guns;
     private int _assistTicks;                    // ticks left of the assist flying onto the target
@@ -118,6 +107,7 @@ public class Game1 : Game
     private bool _menuOpen { get => _menu.Open; set => _menu.Open = value; }
     private readonly Perf _perf = new();
     private bool _showPerf;
+    private bool _cloudShadows = true;          // clouds' shadows on the ground (debug menu, for finding frame drops)
     private int _mapClouds;                              // clouds the map drew last frame
     private float _mapCloudFill;                         // and how many screens over they cover
     private float _frameMs, _frameMsMax, _frameMsMaxShown; // time between frames drawn; the worst in the last half second
@@ -191,19 +181,8 @@ public class Game1 : Game
         BuildMenu();
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
-        _w2 = new RenderTarget2D(GraphicsDevice, vp0.Width / 2, vp0.Height / 2);
-        _w4 = new RenderTarget2D(GraphicsDevice, vp0.Width / 4, vp0.Height / 4);
-        _w8 = new RenderTarget2D(GraphicsDevice, vp0.Width / 8, vp0.Height / 8);
         _grass = Art.Grass(GraphicsDevice);
-        _tree = Art.Tree(GraphicsDevice);
         _clouds = new[] { Art.Cloud(GraphicsDevice, 11), Art.Cloud(GraphicsDevice, 23), Art.Cloud(GraphicsDevice, 37) };
-        _houses = new[]
-        {
-            Art.House(GraphicsDevice, new Color(176, 70, 56)),
-            Art.House(GraphicsDevice, new Color(84, 90, 120)),
-            Art.House(GraphicsDevice, new Color(150, 110, 70)),
-            Art.House(GraphicsDevice, new Color(90, 120, 90)),
-        };
     }
 
     private float Scale => GraphicsDevice.Viewport.Height / 720f;
@@ -256,48 +235,6 @@ public class Game1 : Game
 
     private void AddParticle(Vector2 pos, Vector2 vel, float life, float size, Color color) =>
         _particles.Add(new Particle { Pos = pos, Vel = vel, Life = life, MaxLife = life, Size = size, Color = color });
-
-    // Deterministic per-cell scenery so the world is endless without storing anything.
-    private static uint Hash(int x, int y, uint salt) => World.Hash(x, y, salt);
-
-    private bool TryGetProp(int cx, int cy, out Prop p)
-    {
-        p = default;
-        var r = Hash(cx, cy, 1);
-        if (r % 100 >= 55) return false; // empty cell
-        p.Pos = new Vector2(
-            (cx + 0.15f + (Hash(cx, cy, 2) % 70) / 100f) * Cell,
-            (cy + 0.15f + (Hash(cx, cy, 3) % 70) / 100f) * Cell);
-        if (r % 100 < 20)
-        {
-            p.Tree = true;
-            p.Scale = 1.4f + (Hash(cx, cy, 4) % 40) / 100f;
-        }
-        else
-        {
-            p.House = (int)(Hash(cx, cy, 5) % _houses.Length);
-            p.Rot = (Hash(cx, cy, 6) % 4) * MathHelper.PiOver2;
-            p.Scale = 2.2f;
-        }
-        return true;
-    }
-
-    /// <summary>Returns a crash reason if the plane is low enough to hit a house or tree, else null.</summary>
-    private string CheckScenery()
-    {
-        if (_fm.Altitude > MathF.Max(HouseHeightFt, TreeHeightFt)) return null;
-        int cx0 = (int)MathF.Floor(_pos.X / Cell), cy0 = (int)MathF.Floor(_pos.Y / Cell);
-        for (var cy = cy0 - 1; cy <= cy0 + 1; cy++)
-            for (var cx = cx0 - 1; cx <= cx0 + 1; cx++)
-            {
-                if (!TryGetProp(cx, cy, out var p)) continue;
-                var radius = p.Tree ? TreeRadius * p.Scale / 1.6f : HouseRadius;
-                var height = p.Tree ? TreeHeightFt : HouseHeightFt;
-                if (_fm.Altitude < height && Vector2.DistanceSquared(_pos, p.Pos) < radius * radius)
-                    return p.Tree ? "HIT A TREE" : "HIT A HOUSE";
-            }
-        return null;
-    }
 
     /// <summary>The plane the mouse is over on the map that is also inside the sight's view (nearest to the pointer), if any.</summary>
     private Aircraft PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect, bool needSight = true)
@@ -541,6 +478,7 @@ public class Game1 : Game
         m.Add("PERF", () => DebugMenu.OnOff(_showPerf), () => _showPerf = !_showPerf);
         m.Section("RENDER");
         m.Add("MAP CLOUDS", () => DebugMenu.OnOff(_cloudsOn), () => _cloudsOn = !_cloudsOn);
+        m.Add("CLOUD SHADOWS", () => DebugMenu.OnOff(_cloudShadows), () => _cloudShadows = !_cloudShadows);
         m.Add("SIGHT CLOUDS", () => DebugMenu.OnOff(_gunsight.ShowClouds), () => _gunsight.ShowClouds = !_gunsight.ShowClouds);
         m.Add("SIGHT BLUR", () => DebugMenu.OnOff(_gunsight.Blur), () => _gunsight.Blur = !_gunsight.Blur);
         m.Section("DAMAGE");
@@ -925,9 +863,7 @@ public class Game1 : Game
         Player.Step(_fx, _rng);
         if (kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
 
-        var hit = CheckScenery();
-        if (hit != null) Wreck(hit);
-        else if (_fm.GroundHit)
+        if (_fm.GroundHit)
         {
             // Gentle, slow touchdowns skid to a stop; anything harder is fatal.
             if (_fm.ImpactSinkFpm <= SurvivableSinkFpm && _fm.ImpactSpeedMph <= SurvivableSpeedMph)
@@ -978,34 +914,17 @@ public class Game1 : Game
         _craft.AddRange(_worldModel.Others);
         _craft.Sort((a, b) => a.Altitude.CompareTo(b.Altitude));
 
-        // The ground is only inside the view box while we are within ViewBoxFt of it. As we climb it first goes
-        // out of focus, then fades into sky; diving back down it fades in and sharpens.
-        var groundT = _fm.Altitude / World.ViewBoxFt;
-        var vis = 1f - World.Smooth(0.7f, 1f, groundT);
-        var blur = World.Smooth(0.08f, 0.85f, groundT);
+        // The ground is only inside the view box while we are within ViewBoxFt of it: clear and sharp all the way up,
+        // fading into the sky over the last stretch below the top of the box.
+        var vis = 1f - World.Smooth(0.85f, 1f, _fm.Altitude / World.ViewBoxFt);
         var tGround = _perf.Now;
-        if (vis > 0.002f)
-        {
-            DrawGroundLayer(centre, blur);
-            if (blur > 0.02f) BlurGroundLayer();
-        }
+        if (vis > 0.002f) DrawGroundLayer(centre);
         _perf.Add("GROUND", tGround);
 
         GraphicsDevice.SetRenderTarget(null);
         GraphicsDevice.Clear(SkyColor());
         _sb.Begin(samplerState: SamplerState.LinearClamp);
-        if (vis > 0.002f)
-        {
-            // Sharp, mid-blur and heavy-blur copies of the ground, weighted so they add up to vis.
-            var u = Math.Clamp(blur * 2f, 0f, 2f);
-            float wSharp = u < 1f ? 1f - u : 0f, w4 = u < 1f ? u : 2f - u, w8 = u < 1f ? 0f : u - 1f;
-            wSharp *= vis; w4 *= vis; w8 *= vis;
-            var full = new Rectangle(0, 0, (int)w, (int)h);
-            // Sequential "over" compositing: alpha_k = W_k / (1 - sum of weights drawn after it).
-            if (wSharp > 0.001f) _sb.Draw(_world, full, Color.White * (wSharp / Math.Max(0.001f, 1f - w4 - w8)));
-            if (w4 > 0.001f) _sb.Draw(_w4, full, Color.White * (w4 / Math.Max(0.001f, 1f - w8)));
-            if (w8 > 0.001f) _sb.Draw(_w8, full, Color.White * w8);
-        }
+        if (vis > 0.002f) _sb.Draw(_world, new Rectangle(0, 0, (int)w, (int)h), Color.White * vis);
 
         var tc = _perf.Now;
         if (_cloudsOn) DrawClouds(centre, CloudPass.Below);
@@ -1236,8 +1155,8 @@ public class Game1 : Game
     private Color SkyColor() =>
         Color.Lerp(new Color(122, 182, 236), new Color(58, 108, 204), MathHelper.Clamp(_fm.Altitude / 40000f, 0f, 1f));
 
-    /// <summary>Everything on the ground (grass, houses, trees, and the shadows planes and clouds cast) into one layer.</summary>
-    private void DrawGroundLayer(Vector2 centre, float blur)
+    /// <summary>Everything on the ground (grass, and the shadows planes and clouds cast) into one layer.</summary>
+    private void DrawGroundLayer(Vector2 centre)
     {
         var vp = GraphicsDevice.Viewport;
         float w = vp.Width, h = vp.Height, z = Zoom;
@@ -1257,57 +1176,10 @@ public class Game1 : Game
         }
         _sb.End();
 
-        // Scenery, scaled by altitude along with the ground.
         _sb.Begin(samplerState: SamplerState.LinearClamp);
-        var halfW = w / z / 2f + Cell;
-        var halfH = h / z / 2f + Cell;
-        // The view's centre in the world is the plane's position moved by the pan.
-        var viewC = _pos + _pan / z;
-        int cx0 = (int)MathF.Floor((viewC.X - halfW) / Cell), cx1 = (int)MathF.Floor((viewC.X + halfW) / Cell);
-        int cy0 = (int)MathF.Floor((viewC.Y - halfH) / Cell), cy1 = (int)MathF.Floor((viewC.Y + halfH) / Cell);
-        for (var cy = cy0; cy <= cy1; cy++)
-            for (var cx = cx0; cx <= cx1; cx++)
-            {
-                if (!TryGetProp(cx, cy, out var p)) continue;
-                var screen = centre + (p.Pos - _pos) * z;
-                var scale = z * p.Scale;
-                if (scale * 64f < 1.5f) continue; // too small to see
-                if (p.Tree)
-                {
-                    // Soft shadow, then canopy.
-                    _sb.Draw(_tree, screen + new Vector2(10, 12) * z, null, new Color(0, 0, 0, 60), 0f,
-                        new Vector2(24, 24), scale, SpriteEffects.None, 0f);
-                    _sb.Draw(_tree, screen, null, Color.White, 0f, new Vector2(24, 24), scale, SpriteEffects.None, 0f);
-                }
-                else
-                {
-                    var tex = _houses[p.House];
-                    _sb.Draw(tex, screen + new Vector2(8, 10) * z, null, new Color(0, 0, 0, 70), p.Rot,
-                        new Vector2(32, 32), scale, SpriteEffects.None, 0f);
-                    _sb.Draw(tex, screen, null, Color.White, p.Rot, new Vector2(32, 32), scale, SpriteEffects.None, 0f);
-                }
-            }
-
-        var ts = _perf.Now;
-        if (_cloudsOn) DrawClouds(centre, CloudPass.Shadows);
+        if (_cloudsOn && _cloudShadows) DrawClouds(centre, CloudPass.Shadows);
         DrawTraffic(centre, TrafficPass.Shadows);
-        _perf.Add("GROUND", ts);
         _sb.End();
-    }
-
-    /// <summary>Halves the ground layer repeatedly (bilinear) to get the soft copies used when it is out of focus.</summary>
-    private void BlurGroundLayer()
-    {
-        RenderTarget2D[] chain = { _w2, _w4, _w8 };
-        Texture2D from = _world;
-        foreach (var rt in chain)
-        {
-            GraphicsDevice.SetRenderTarget(rt);
-            _sb.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.LinearClamp);
-            _sb.Draw(from, new Rectangle(0, 0, rt.Width, rt.Height), Color.White);
-            _sb.End();
-            from = rt;
-        }
     }
 
     private enum TrafficPass { Shadows, Below, Above }

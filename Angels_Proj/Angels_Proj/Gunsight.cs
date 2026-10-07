@@ -326,7 +326,7 @@ public sealed class Gunsight
         if (alt < Box * 0.995f)
         {
             var rg = MathF.Sqrt(Box * Box - alt * alt);
-            Color GroundAt(float r) => Color.Lerp(GroundCol, HorizonCol, World.Smooth(0.4f, 1f, MathF.Sqrt(r * r + alt * alt) / Box));
+            Color GroundAt(float r) => Color.Lerp(GroundCol, HorizonCol, World.Smooth(0.75f, 1f, MathF.Sqrt(r * r + alt * alt) / Box));
             var fr = new[] { 0f, 0.25f, 0.5f, 0.7f, 0.85f, 1f };
             const int gseg = 40;
             Vector3 G(float r, int k) { var a = k * MathHelper.TwoPi / gseg; return new Vector3(r * MathF.Cos(a), -alt, r * MathF.Sin(a)); }
@@ -351,7 +351,7 @@ public sealed class Gunsight
                 {
                     float t0 = -half + 2f * half * i / pieces, t1 = -half + 2f * half * (i + 1) / pieces;
                     Vector3 P(float t) => alongZ ? new Vector3(offset, -alt, t) : new Vector3(t, -alt, offset);
-                    Color Col(float t) => Color.Lerp(GridCol, HorizonCol, World.Smooth(0.4f, 1f, MathF.Sqrt(offset * offset + t * t + alt * alt) / Box));
+                    Color Col(float t) => Color.Lerp(GridCol, HorizonCol, World.Smooth(0.75f, 1f, MathF.Sqrt(offset * offset + t * t + alt * alt) / Box));
                     _lines.Add(Vtx(P(t0), Col(t0))); _lines.Add(Vtx(P(t1), Col(t1)));
                 }
             }
