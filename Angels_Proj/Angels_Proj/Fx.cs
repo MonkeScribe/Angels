@@ -18,6 +18,7 @@ public sealed class Fx
         public float Shade;       // smoke: grey level the sprite is tinted to (0 black .. 1 as drawn)
         public float Rot;         // turn of the sprite, so neighbouring puffs don't look alike
         public int Variant;       // which smoke sprite
+        public int Id;            // counts up as particles are made: lets the gunsight thin a trail out without flicker
         public bool Own;          // from the player's own aircraft: the gunsight (in the cockpit) leaves these out
         public Kind Kind;
         public float T => Life / MaxLife;
@@ -28,13 +29,14 @@ public sealed class Fx
 
     public readonly List<Particle> Particles = new();
     private readonly Random _rng = new(11);
+    private int _nextId;
 
     private float R() => (float)_rng.NextDouble() - 0.5f;
     private float U() => (float)_rng.NextDouble();
 
     public void Spark(Vector3 pos) => Particles.Add(new Particle
     {
-        Kind = Kind.Spark, Pos = pos, Vel = new Vector3(R(), R(), R()) * 60f, Life = 0.18f, MaxLife = 0.18f, Size = 1.6f, Alpha = 1f, Shade = 1f,
+        Kind = Kind.Spark, Id = _nextId++, Pos = pos, Vel = new Vector3(R(), R(), R()) * 60f, Life = 0.18f, MaxLife = 0.18f, Size = 1.6f, Alpha = 1f, Shade = 1f,
     });
 
     /// <summary>
@@ -51,7 +53,7 @@ public sealed class Fx
             var life = 2.5f + 4f * heavy;
             Particles.Add(new Particle
             {
-                Kind = Kind.Smoke, Own = own,
+                Kind = Kind.Smoke, Own = own, Id = _nextId++,
                 Pos = at + back * (2f + U() * 3f) + new Vector3(R(), R(), R()) * (1.5f + 2f * heavy),
                 Vel = new Vector3(R() * 3f, 2f + U() * 3f, R() * 3f),
                 Life = life, MaxLife = life,
@@ -66,7 +68,7 @@ public sealed class Fx
             var life = 1.2f + 0.4f * leaks;
             Particles.Add(new Particle
             {
-                Kind = Kind.Vapour, Own = own,
+                Kind = Kind.Vapour, Own = own, Id = _nextId++,
                 Pos = at + back * (8f + U() * 2f) + new Vector3(R(), R() - 1.5f, R()),
                 Vel = new Vector3(R(), R(), R()),
                 Life = life, MaxLife = life, Size = 1.2f, Growth = 1.5f + 0.5f * leaks, Alpha = 0.35f, Shade = 1f,

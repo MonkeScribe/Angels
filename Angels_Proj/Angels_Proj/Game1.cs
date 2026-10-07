@@ -481,6 +481,9 @@ public class Game1 : Game
         m.Add("CLOUD SHADOWS", () => DebugMenu.OnOff(_cloudShadows), () => _cloudShadows = !_cloudShadows);
         m.Add("SIGHT CLOUDS", () => DebugMenu.OnOff(_gunsight.ShowClouds), () => _gunsight.ShowClouds = !_gunsight.ShowClouds);
         m.Add("SIGHT BLUR", () => DebugMenu.OnOff(_gunsight.Blur), () => _gunsight.Blur = !_gunsight.Blur);
+        m.Add("SIGHT SMOKE", () => DebugMenu.OnOff(_gunsight.ShowSmoke), () => _gunsight.ShowSmoke = !_gunsight.ShowSmoke);
+        m.Add("SMOKE BUDGET", () => _gunsight.SmokeBudget > 0 ? _gunsight.SmokeBudget.ToString() : "NONE", () =>
+            _gunsight.SmokeBudget = _gunsight.SmokeBudget switch { 0 => 80, 80 => 160, 160 => 320, _ => 0 });
         m.Section("DAMAGE");
         m.Add("HIT OWN ENGINE", () => $"{MathF.Ceiling(_dmg.EngineHp):0} HP", () => _dmg.DamagePart(Part.Engine, 10f, _rng));
         m.Section("TESTS");
@@ -1374,7 +1377,9 @@ public class Game1 : Game
             $" SIGHT {_perf["SIGHT"]:0.00}  GROUND {_perf["GROUND"]:0.00}",
             $" CLOUDS {_perf["MAP CLOUDS"]:0.00}  TRAFFIC {_perf["TRAFFIC"]:0.00}",
             $"MAP CLOUDS {_mapClouds}  FILL {_mapCloudFill:0.0}",
-            $"SIGHT CLOUDS {_gunsight.CloudsDrawn}  FILL {_gunsight.CloudFill:0.0}" + (_gunsight.Blur ? "" : "  NO BLUR"),
+            $"SIGHT CLOUDS {_gunsight.CloudsDrawn}  FILL {_gunsight.CloudFill:0.0}" + (_gunsight.Blur ? "  BLUR" : ""),
+            $"SIGHT SMOKE {_gunsight.SmokeDrawn}/{_gunsight.SmokeSeen}  FILL {_gunsight.SmokeFill:0.0}",
+            $"SIGHT DRAW CALLS {_gunsight.SpriteRuns} PER SLAB",
             $"PARTICLES {_fx.Particles.Count}  ROUNDS {_guns.Rounds.Count}  AIRCRAFT {_worldModel.Planes.Count}",
         };
         if (_test is TestMode.FollowThroughCloud or TestMode.CloudIntoView)

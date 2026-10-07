@@ -42,11 +42,17 @@ public sealed class Gunsight
     private readonly SpriteBatch _sb;
     private readonly BasicEffect _fx, _fxTex;
     private readonly Texture2D[] _cloudTex;
+    // Smoke, fuel mist, fire and clouds packed into one texture, so the sorted sprites aren't split into a draw call each
+    // time the picture changes (smoke puffs alone come in several, picked at random): see AddBillboard.
+    private readonly Texture2D _atlas;
+    private readonly Dictionary<Texture2D, Vector4> _atlasUv = new();
     private readonly EffectArt _effects;
     private float _time;
     // Camera-facing sprites (planes and clouds), as six vertices each, drawn far to near.
     private readonly List<(float dist, Texture2D tex, int start)> _bills = new();
     private readonly List<VertexPositionColorTexture> _billVerts = new();
+    private VertexPositionColorTexture[] _sorted = new VertexPositionColorTexture[0];
+    private readonly List<(Texture2D tex, int start, int count)> _batches = new();
     private readonly List<CloudField.Puff> _puffs = new();
     private RenderTarget2D _work, _final, _r2, _r4, _r8;
     private readonly Texture2D _ring, _prop, _disc, _vignette;
@@ -58,6 +64,13 @@ public sealed class Gunsight
     // Debug: switch the clouds or the depth-of-field blur off, and what the last frame drew (for the PERF overlay).
     public bool ShowClouds = true, Blur = false;
     public int CloudsDrawn;
+    public bool ShowSmoke = true;
+    /// <summary>Most smoke and mist puffs drawn at once (0 = no limit). Past it only every second (third...) puff is drawn,
+    /// a little bigger and denser to make up for the others, which keeps a long trail seen end-on from being drawn
+    /// hundreds of times over the same pixels.</summary>
+    public int SmokeBudget = 160;
+    public int SmokeSeen, SmokeDrawn, SpriteRuns;   // SpriteRuns: draw calls for the sprites, per slab
+    public float SmokeFill;     // the smoke's quads added up, in whole views
     public float CloudFill;      // the clouds' quads added up, in whole views: how many times over they cover the sight
 
     /// <summary>Extra world-space lines (feet) to draw in the view, with the damage value that picks their colour. For the
@@ -81,6 +94,11 @@ public sealed class Gunsight
         _fx = new BasicEffect(gd) { VertexColorEnabled = true, LightingEnabled = false, FogEnabled = false };
         _fxTex = new BasicEffect(gd) { VertexColorEnabled = true, TextureEnabled = true, LightingEnabled = false, FogEnabled = false };
         _cloudTex = new[] { Art.Cloud(gd, 11), Art.Cloud(gd, 23), Art.Cloud(gd, 37) };
+        var packed = new List<Texture2D>(_cloudTex);
+        packed.AddRange(effects.Smoke);
+        packed.AddRange(effects.Fire);
+        packed.Add(effects.Mist);
+        _atlas = BuildAtlas(gd, packed);
 
         _ring = Bake(gd, 256, 256, (x, y) =>
         {
@@ -103,6 +121,39 @@ public sealed class Gunsight
             a = a * a * 0.6f;
             return new Color(0f, 0f, 0f, a);
         });
+    }
+
+    /// <summary>Packs the textures into rows of one texture (with a transparent gap round each so they don't bleed into
+    /// each other) and notes where each went. Any too wide to fit stays a texture of its own.</summary>
+    private Texture2D BuildAtlas(GraphicsDevice gd, List<Texture2D> texes)
+    {
+        const int W = 1024, Pad = 2;
+        texes = new List<Texture2D>(new HashSet<Texture2D>(texes));
+        texes.Sort((a, b) => b.Height.CompareTo(a.Height));
+        var places = new List<(Texture2D tex, int x, int y)>();
+        int x = Pad, y = Pad, rowH = 0;
+        foreach (var t in texes)
+        {
+            if (t.Width + 2 * Pad > W) continue;
+            if (x + t.Width + Pad > W) { x = Pad; y += rowH + Pad; rowH = 0; }
+            places.Add((t, x, y));
+            x += t.Width + Pad;
+            rowH = Math.Max(rowH, t.Height);
+        }
+        var h = 1;
+        while (h < y + rowH + Pad) h *= 2;
+        var px = new Color[W * h];
+        foreach (var (t, tx, ty) in places)
+        {
+            var src = new Color[t.Width * t.Height];
+            t.GetData(src);
+            for (var row = 0; row < t.Height; row++)
+                Array.Copy(src, row * t.Width, px, (ty + row) * W + tx, t.Width);
+            _atlasUv[t] = new Vector4((float)tx / W, (float)ty / h, (float)(tx + t.Width) / W, (float)(ty + t.Height) / h);
+        }
+        var atlas = new Texture2D(gd, W, h);
+        atlas.SetData(px);
+        return atlas;
     }
 
     private static Texture2D Bake(GraphicsDevice gd, int w, int h, Func<int, int, Color> f)
@@ -181,7 +232,8 @@ public sealed class Gunsight
         _fxTex.World = Matrix.Identity;
         _fxTex.View = _fx.View;
         BuildGeometry(camPos, alt, fwd, planes, fx, tracers);
-        var batches = Batches();
+        Batches();
+        SpriteRuns = _batches.Count;
         var tris = _tris.ToArray(); var lines = _lines.ToArray();
         var blend = _blend.ToArray(); var blendLines = _blendLines.ToArray();
 
@@ -207,12 +259,12 @@ public sealed class Gunsight
             Draw(blend, PrimitiveType.TriangleList, 3);
             Draw(blendLines, PrimitiveType.LineList, 2);
             _fxTex.Projection = _fx.Projection;
-            foreach (var (tex, verts) in batches)
+            foreach (var (tex, start, count) in _batches)
             {
                 _fxTex.Texture = tex;
                 _fxTex.CurrentTechnique.Passes[0].Apply();
                 _gd.SamplerStates[0] = SamplerState.LinearClamp;
-                _gd.DrawUserPrimitives(PrimitiveType.TriangleList, verts, 0, verts.Length / 3);
+                _gd.DrawUserPrimitives(PrimitiveType.TriangleList, _sorted, start, count / 3);
             }
 
             var src = Soften(_work, Blur ? blur : 0);
@@ -245,22 +297,24 @@ public sealed class Gunsight
         _gd.BlendState = BlendState.Opaque;
     }
 
-    /// <summary>The camera-facing sprites sorted far to near and grouped into runs that share a texture, so they draw
-    /// in the right order over each other with as few switches as possible.</summary>
-    private List<(Texture2D tex, VertexPositionColorTexture[] verts)> Batches()
+    /// <summary>The camera-facing sprites sorted far to near (into _sorted) and grouped into runs that share a texture
+    /// (_batches), so they draw in the right order over each other with as few draw calls as possible. The arrays are
+    /// kept from frame to frame.</summary>
+    private void Batches()
     {
         _bills.Sort((a, b) => b.dist.CompareTo(a.dist));
-        var batches = new List<(Texture2D, VertexPositionColorTexture[])>();
-        var run = new List<VertexPositionColorTexture>();
+        var n = _bills.Count * 6;
+        if (_sorted.Length < n) Array.Resize(ref _sorted, Math.Max(n, _sorted.Length * 2));
+        _batches.Clear();
         Texture2D runTex = null;
+        int runStart = 0, k = 0;
         foreach (var (_, tex, start) in _bills)
         {
-            if (tex != runTex && run.Count > 0) { batches.Add((runTex, run.ToArray())); run.Clear(); }
+            if (tex != runTex && k > runStart) { _batches.Add((runTex, runStart, k - runStart)); runStart = k; }
             runTex = tex;
-            for (var i = 0; i < 6; i++) run.Add(_billVerts[start + i]);
+            for (var i = 0; i < 6; i++) _sorted[k++] = _billVerts[start + i];
         }
-        if (run.Count > 0) batches.Add((runTex, run.ToArray()));
-        return batches;
+        if (k > runStart) _batches.Add((runTex, runStart, k - runStart));
     }
 
     /// <summary>Adds a camera-facing sprite: the part of the texture in uv (left, top, right, bottom) on a quad of the given
@@ -268,6 +322,13 @@ public sealed class Gunsight
     private void AddBillboard(Texture2D tex, float dist, Vector3 centre, Vector3 rightV, Vector3 upV, float halfW, float halfH,
         float roll, bool flip, Vector4 uv, Color col)
     {
+        if (_atlasUv.TryGetValue(tex, out var r))
+        {
+            // Packed: the same part of the picture, where it sits in the atlas.
+            float rw = r.Z - r.X, rh = r.W - r.Y;
+            uv = new Vector4(r.X + uv.X * rw, r.Y + uv.Y * rh, r.X + uv.Z * rw, r.Y + uv.W * rh);
+            tex = _atlas;
+        }
         float cr = MathF.Cos(roll), sr = MathF.Sin(roll);
         float u0 = flip ? uv.Z : uv.X, u1 = flip ? uv.X : uv.Z;
         // Corners as (x, y) with y up, turned clockwise: x' = x cos + y sin, y' = -x sin + y cos.
@@ -410,12 +471,24 @@ public sealed class Gunsight
 
         // Smoke trails and fuel mist as camera-facing sprites (sorted with the planes and clouds), sparks as plain quads.
         // Our own trail is left out: it starts at our cowling, right in front of the sight, and is behind us at once.
+        var viewTanS = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
+        var viewAspectS = (float)_final.Width / MathF.Max(1f, _final.Height);
+        SmokeSeen = SmokeDrawn = 0;
+        SmokeFill = 0f;
+        bool InView(in Fx.Particle p, out Vector3 c, out float dist)
+        {
+            c = p.Pos - camPos;
+            dist = c.Length();
+            return !p.Own && Vector3.Dot(c, fwd) >= 8f && dist <= Box;
+        }
+        if (ShowSmoke)
+            foreach (var p in fx.Particles)
+                if (p.Kind != Fx.Kind.Spark && InView(p, out _, out _)) SmokeSeen++;
+        // Over budget: keep every stride-th puff (by its id, so the same ones stay picked from frame to frame).
+        var stride = SmokeBudget > 0 ? Math.Max(1, (SmokeSeen + SmokeBudget - 1) / SmokeBudget) : 1;
         foreach (var p in fx.Particles)
         {
-            if (p.Own) continue;
-            var c = p.Pos - camPos;
-            var dist = c.Length();
-            if (Vector3.Dot(c, fwd) < 8f || dist > Box) continue;
+            if (!InView(p, out var c, out var dist)) continue;
             var op = p.Opacity;
             if (op < 0.01f) continue;
             if (p.Kind == Fx.Kind.Spark)
@@ -427,8 +500,17 @@ public sealed class Gunsight
                 _blend.Add(Vtx(q0, col)); _blend.Add(Vtx(q2, col)); _blend.Add(Vtx(q3, col));
                 continue;
             }
-            var tex = p.Kind == Fx.Kind.Smoke ? _effects.Smoke[p.Variant % _effects.Smoke.Length] : _effects.Mist;
+            if (!ShowSmoke || p.Id % stride != 0) continue;
             var hs = p.Size / (2f * 0.85f);
+            if (stride > 1)
+            {
+                op = 1f - MathF.Pow(1f - op, MathF.Sqrt(stride));        // denser, standing in for the ones left out
+                hs *= MathF.Min(1.6f, 1f + 0.2f * (stride - 1));         // and bigger, so the trail doesn't break up
+            }
+            var along = Vector3.Dot(c, fwd);
+            SmokeDrawn++;
+            SmokeFill += MathF.Min(50f, 4f * hs * hs / (4f * along * along * viewTanS * viewTanS / viewAspectS));
+            var tex = p.Kind == Fx.Kind.Smoke ? _effects.Smoke[p.Variant % _effects.Smoke.Length] : _effects.Mist;
             AddBillboard(tex, dist, c, rightV, upV, hs, hs, p.Rot, false, new Vector4(0f, 0f, 1f, 1f),
                 new Color(p.Shade * op, p.Shade * op, p.Shade * op, op));
         }
