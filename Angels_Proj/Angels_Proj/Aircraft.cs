@@ -132,6 +132,15 @@ public abstract class Aircraft
         return loss;
     }
 
+    /// <summary>Damage that has already got through a part's armour (see DamageModel.Apply), for a round that carries its
+    /// damage on from part to part. Returns the hit points the part lost.</summary>
+    public float TakeDamage(Part part, DamageTuning.Weapon weapon, float left, Random rng)
+    {
+        var loss = DamageModel.Apply(this[part], weapon, left);
+        if (part == Part.Engine && loss > 0f) EngineDamaged(rng);
+        return loss;
+    }
+
     /// <summary>Takes hit points straight off a part (debug, or damage that isn't a round).</summary>
     public void DamagePart(Part part, float hp, Random rng)
     {

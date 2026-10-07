@@ -61,17 +61,30 @@ public sealed class World
 
     // ---------------------------------------------------------------- hits
 
-    /// <summary>Hit scan: the nearest aircraft (other than ignore) whose hit boxes the ray passes through within maxRange
-    /// feet, and the part hit. A part already gone lets rounds through.</summary>
-    public bool RayHit(Vector3 origin, Vector3 dir, float maxRange, Aircraft ignore, out Aircraft hit, out float distance, out Part part)
+    /// <summary>One part a ray passes into: which aircraft, which part, and how far along the ray it enters.</summary>
+    public readonly struct RayEntry
     {
-        hit = null; distance = maxRange; part = Part.Fuselage;
+        public readonly Aircraft Plane;
+        public readonly Part Part;
+        public readonly float Distance;
+        public RayEntry(Aircraft plane, Part part, float distance) { Plane = plane; Part = part; Distance = distance; }
+    }
+
+    private readonly Dictionary<(Aircraft, Part), float> _entries = new();
+
+    /// <summary>Every part of every aircraft (other than ignore) that a ray enters within maxRange feet, nearest first,
+    /// each part once (where it is first entered). A part the ray starts inside isn't entered again, so a round that is
+    /// part way through a part when a tick ends doesn't hit it twice; a part already gone lets rounds through.</summary>
+    public void RayHits(Vector3 origin, Vector3 dir, float maxRange, Aircraft ignore, List<RayEntry> into)
+    {
+        into.Clear();
+        _entries.Clear();
         foreach (var p in Planes)
         {
             if (p == ignore) continue;
-            Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
             var rel = origin - p.PositionFt;
             if (rel.LengthSquared() > (maxRange + 40f) * (maxRange + 40f)) continue;
+            Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
             // Into the plane's frame (local +z is backwards, so forward is -z).
             Vector3 o = new(Vector3.Dot(rel, r), Vector3.Dot(rel, u), Vector3.Dot(rel, -f));
             Vector3 d = new(Vector3.Dot(dir, r), Vector3.Dot(dir, u), Vector3.Dot(dir, -f));
@@ -79,20 +92,23 @@ public sealed class World
             {
                 if (pt.Gone) continue;
                 foreach (var b in pt.Boxes)
-                    if (Slab(o, d, b.Min, b.Max, out var t) && t < distance)
-                    {
-                        distance = t; hit = p; part = pt.Kind;
-                    }
+                {
+                    if (!Entry(o, d, b.Min, b.Max, out var t) || t > maxRange) continue;
+                    var key = (p, pt.Kind);
+                    if (!_entries.TryGetValue(key, out var old) || t < old) _entries[key] = t;
+                }
             }
         }
-        return hit != null;
+        foreach (var e in _entries) into.Add(new RayEntry(e.Key.Item1, e.Key.Item2, e.Value));
+        into.Sort((x, y) => x.Distance.CompareTo(y.Distance));
     }
 
-    /// <summary>A round hits a part of an aircraft (see Aircraft.Hit). Returns the hit points the part lost.</summary>
-    public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng)
+    /// <summary>Damage that has got through a part's armour lands on it (see Aircraft.TakeDamage). Returns the hit points
+    /// the part lost.</summary>
+    public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float left, Random rng)
     {
         Hits++;
-        return a.Hit(part, weapon, impactSpeedFtS, rng);
+        return a.TakeDamage(part, weapon, left, rng);
     }
 
     /// <summary>The twelve edges of every hit box of an aircraft, as pairs of world points (feet), coloured by the state of
@@ -128,25 +144,29 @@ public sealed class World
         }
     }
 
-    private static bool Slab(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t)
+    /// <summary>Where a ray from o along d enters a box (t, along the ray), if it does: false if it misses, or starts
+    /// inside the box.</summary>
+    private static bool Entry(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t)
     {
-        float t0 = 0f, t1 = float.MaxValue;
+        float t0 = float.MinValue, t1 = float.MaxValue;
+        t = 0f;
         for (var a = 0; a < 3; a++)
         {
             float oa = a == 0 ? o.X : a == 1 ? o.Y : o.Z, da = a == 0 ? d.X : a == 1 ? d.Y : d.Z;
             float lo = a == 0 ? min.X : a == 1 ? min.Y : min.Z, hi = a == 0 ? max.X : a == 1 ? max.Y : max.Z;
             if (MathF.Abs(da) < 1e-6f)
             {
-                if (oa < lo || oa > hi) { t = 0; return false; }
+                if (oa < lo || oa > hi) return false;
             }
             else
             {
                 float ta = (lo - oa) / da, tb = (hi - oa) / da;
                 if (ta > tb) (ta, tb) = (tb, ta);
                 t0 = MathF.Max(t0, ta); t1 = MathF.Min(t1, tb);
-                if (t0 > t1) { t = 0; return false; }
+                if (t0 > t1) return false;
             }
         }
+        if (t0 < 0f || t1 < 0f) return false;   // starts inside (or the box is behind)
         t = t0;
         return true;
     }

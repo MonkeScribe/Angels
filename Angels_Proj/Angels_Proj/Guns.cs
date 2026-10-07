@@ -90,9 +90,15 @@ public sealed class Guns
         public bool Tracer;
         public int Gun;
         public Vector2 MapOffset;     // world px to add to the round's position on the 2D map, so it starts at the drawn muzzle
+        public float Damage;          // the damage it still carries: rolled when it first hits, less each part's armour
+                                      // as it goes through (negative: not rolled yet)
     }
 
     public readonly List<Round> Rounds = new();
+    private readonly List<World.RayEntry> _hits = new();
+
+    /// <summary>What each round is: a .303 Browning (Damage.cs).</summary>
+    public static readonly DamageTuning.Weapon Weapon = DamageTuning.Browning303;
     public readonly int[] Ammo = new int[GunCount];
     public int AmmoLeft { get { var n = 0; foreach (var a in Ammo) n += a; return n; } }
 
@@ -144,7 +150,7 @@ public sealed class Guns
                 var vel = dir * MuzzleVelocityFtS + aircraftVel;
                 Rounds.Add(new Round
                 {
-                    Pos = muzzle + vel * lead, Vel = vel, Age = lead, Tracer = _fired[g]++ % TracerEvery == 0, Gun = g,
+                    Pos = muzzle + vel * lead, Vel = vel, Age = lead, Tracer = _fired[g]++ % TracerEvery == 0, Gun = g, Damage = -1f,
                     MapOffset = mapMuzzleWorld[g] - new Vector2(muzzle.X, muzzle.Z) * World.PxPerFoot,
                 });
                 wings |= m.X < 0f ? 1 : 2;
@@ -165,14 +171,28 @@ public sealed class Guns
             var vel = r.Vel - r.Vel * (DragK * speed * dt) - new Vector3(0f, G * dt, 0f);
             var step = (r.Vel + vel) * 0.5f * dt;
             var len = step.Length();
-            if (len > 0.01f && world.RayHit(r.Pos, step / len, len, shooter, out var plane, out var dist, out var part))
+            if (len > 0.01f)
             {
-                var at = r.Pos + step / len * dist;
-                // The damage roll uses the round's speed relative to the target (Damage.cs).
-                world.Hit(plane, part, DamageTuning.Browning303, (r.Vel - plane.VelocityFt).Length(), _rng);
-                if (ShowEffects) fx.Spark(at);
-                Rounds.RemoveAt(i);
-                continue;
+                // Penetration: the round's damage is rolled when it first hits (by calibre and its speed relative to that
+                // target), then it goes through the parts in its way nearest first. Each part's armour comes off the
+                // damage: if the armour stops it all, the round stops there; if not, what's left lands on the part and
+                // carries on, less that armour, into the next.
+                world.RayHits(r.Pos, step / len, len, shooter, _hits);
+                var stopped = false;
+                foreach (var h in _hits)
+                {
+                    if (r.Damage < 0f) r.Damage = DamageModel.Roll(Weapon, (r.Vel - h.Plane.VelocityFt).Length(), _rng);
+                    var left = r.Damage - h.Plane[h.Part].Armor;
+                    if (left <= 0f)
+                    {
+                        if (ShowEffects) fx.Spark(r.Pos + step / len * h.Distance);
+                        stopped = true;
+                        break;
+                    }
+                    world.Hit(h.Plane, h.Part, Weapon, left, _rng);
+                    r.Damage = left;
+                }
+                if (stopped) { Rounds.RemoveAt(i); continue; }
             }
             r.Pos += step;
             r.Vel = vel;

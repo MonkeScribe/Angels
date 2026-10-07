@@ -123,12 +123,15 @@ public static class DamageModel
     public static float Floor(AircraftPart part, DamageTuning.Weapon w) =>
         DamageTuning.MaxHp * Math.Clamp((part.Integrity - w.Destructive) / 100f, 0f, 1f);
 
-    /// <summary>One round hits a part: roll, take off the armour, and take what's left off its hit points, at full
-    /// effect down to the weapon's floor for that part and reduced below it. Returns the hit points lost (0 if the
-    /// armour stopped it).</summary>
-    public static float Hit(AircraftPart part, DamageTuning.Weapon w, float impactSpeedFtS, Random rng)
+    /// <summary>One round hits a part: roll, take off the armour, and take what's left off its hit points (see Apply).
+    /// Returns the hit points lost (0 if the armour stopped it).</summary>
+    public static float Hit(AircraftPart part, DamageTuning.Weapon w, float impactSpeedFtS, Random rng) =>
+        Apply(part, w, Roll(w, impactSpeedFtS, rng) - part.Armor);
+
+    /// <summary>Damage that got through a part's armour (left, already less the armour) comes off its hit points: at full
+    /// effect down to the weapon's floor for that part and reduced below it. Returns the hit points lost.</summary>
+    public static float Apply(AircraftPart part, DamageTuning.Weapon w, float left)
     {
-        var left = Roll(w, impactSpeedFtS, rng) - part.Armor;
         if (left <= 0f || part.Hp <= 0f) return 0f;
         var raw = left * part.DamageMultiplier;
         var hp = part.Hp;
