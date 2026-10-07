@@ -971,10 +971,11 @@ public class Game1 : Game
                 // Drawn back from the head: faint glow, red tail, brighter red, white-hot head.
                 void Dash(float from, float len, float width, Color c) =>
                     _sb.Draw(_pixel, sp - vd * from * tw, null, c, ang, new Vector2(1f, 0.5f), new Vector2(len * tw, width * tw), SpriteEffects.None, 0f);
-                Dash(-1f, 8f, 3f, new Color(255, 40, 20) * (0.22f * glow));
-                Dash(2f, 4f, 1f, new Color(255, 40, 20) * (0.6f * glow));
-                Dash(0f, 3f, 1f, new Color(255, 90, 60) * glow);
-                Dash(-1f, 2f, 1f, new Color(255, 245, 235) * glow);
+                Dash(-1f, 9f, 3f, new Color(255, 120, 90) * (0.3f * glow));   // daylight glare: washed-out pinkish orange
+                Dash(3f, 5f, 1f, new Color(255, 70, 50) * (0.75f * glow));     // red tail
+                Dash(0f, 4f, 1f, new Color(255, 200, 175) * glow);             // hot pink-white
+                Dash(-1f, 3f, 1f, new Color(255, 255, 250) * glow);            // white-hot head
+                Dash(-1f, 2f, 2f, new Color(255, 250, 240) * (0.5f * glow));   // and its flare
             }
         }
 

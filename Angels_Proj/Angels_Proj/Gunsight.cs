@@ -419,9 +419,9 @@ public sealed class Gunsight
             _blendLines.Add(Vtx(dl.A - camPos, dl.Color)); _blendLines.Add(Vtx(dl.B - camPos, dl.Color));
         }
 
-        // Tracers: a burning streak, white-hot at the head fading through red to nothing at the tail, a ribbon turned to
-        // face the camera. Sized in screen pixels (a core a pixel or two wide with a soft red halo) so it stays a fine
-        // line at any range, but never fatter than a round really is up close.
+        // Tracers: a burning streak, white-hot at the head fading through pink-red to nothing at the tail, ribbons turned
+        // to face the camera and drawn as light added to the scene. Sized in screen pixels (a core about two pixels wide in
+        // a pinkish-orange glare) so it stays a fine bright line at any range, but never fatter than a round's glare up close.
         var tanH = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
         var ftPerPx = 2f * tanH / MathF.Max(1f, _final.Width);   // feet across one pixel, per foot of range
         foreach (var tr in tracers)
@@ -433,18 +433,27 @@ public sealed class Gunsight
             var range = MathF.Max(mid.Length(), 20f);
             var px = ftPerPx * range;                     // feet per pixel at this range
             var g = tr.Glow;
-            void Ribbon(float halfHead, float halfTail, Color head, Color tail)
+            // A ribbon from a fraction 'from' of the way along the streak to its head.
+            void Ribbon(float from, float halfHead, float halfTail, Color head, Color tail)
             {
-                Vector3 p0 = a - side * halfTail, p1 = a + side * halfTail, p2 = b + side * halfHead, p3 = b - side * halfHead;
+                var a0 = a + dir * from;
+                Vector3 p0 = a0 - side * halfTail, p1 = a0 + side * halfTail, p2 = b + side * halfHead, p3 = b - side * halfHead;
                 _blend.Add(Vtx(p0, tail)); _blend.Add(Vtx(p1, tail)); _blend.Add(Vtx(p2, head));
                 _blend.Add(Vtx(p0, tail)); _blend.Add(Vtx(p2, head)); _blend.Add(Vtx(p3, head));
             }
-            // Halo: red, about three pixels across at the head (but no more than a foot wide), tapering to the tail.
-            var haloHalf = MathF.Min(1.5f * px, 0.5f);
-            Ribbon(haloHalf, haloHalf * 0.3f, Premul(new Vector3(1f, 0.1f, 0.04f), 0.5f * g), Premul(new Vector3(1f, 0.05f, 0f), 0f));
-            // Core: a pixel or so wide, white-hot at the head, red where it trails.
-            var coreHalf = MathF.Min(0.6f * px, 0.2f);
-            Ribbon(coreHalf, coreHalf * 0.35f, Premul(new Vector3(1f, 0.92f, 0.85f), g), Premul(new Vector3(1f, 0.15f, 0.05f), 0.55f * g));
+            // Light rather than paint: premultiplied colour over a smaller alpha adds to what's behind, so the streak
+            // brightens the sky the way a tracer's glare does instead of laying a dull red line over it.
+            static Color Glow(Vector3 rgb, float bright, float cover) => new(rgb.X * bright, rgb.Y * bright, rgb.Z * bright, cover);
+            // Glare: in daylight a red tracer reads as a washed-out pinkish orange haze round a near-white core.
+            // About five pixels across at the head (no more than a couple of feet), tapering to the tail.
+            var haloHalf = MathF.Min(2.5f * px, 0.9f);
+            Ribbon(0f, haloHalf, haloHalf * 0.35f, Glow(new Vector3(1f, 0.55f, 0.42f), 0.6f * g, 0.12f * g), Glow(new Vector3(1f, 0.35f, 0.25f), 0f, 0f));
+            // Core: about two pixels wide, white-hot (faintly warm) at the head, pink-red where it trails.
+            var coreHalf = MathF.Min(1.0f * px, 0.3f);
+            Ribbon(0f, coreHalf, coreHalf * 0.4f, Glow(new Vector3(1f, 0.97f, 0.9f), g, 0.75f * g), Glow(new Vector3(1f, 0.45f, 0.35f), 0.65f * g, 0.35f * g));
+            // Head flare: the burning base of the round, the brightest point, over the last third of the streak.
+            var flareHalf = MathF.Min(1.6f * px, 0.5f);
+            Ribbon(0.65f, flareHalf, flareHalf * 0.5f, Glow(Vector3.One, g, 0.5f * g), Glow(new Vector3(1f, 0.85f, 0.7f), 0.4f * g, 0.15f * g));
         }
     }
 
