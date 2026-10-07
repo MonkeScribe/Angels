@@ -313,7 +313,7 @@ public class Game1 : Game
     private void SpriteZones(Aircraft p, Vector2 centre, System.Collections.Generic.List<(Vector2[] poly, float damage)> into, float pad = 0f)
     {
         var s = Scale;
-        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f)));
         var f = DistFactor(p.Altitude);
         var screen = centre + (p.Pos - _pos) * (s * GroundZoom / f);
         var scale = ps / f;
@@ -360,7 +360,7 @@ public class Game1 : Game
         var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
         // Where each muzzle is on the map, from the sprite as it is drawn (it is drawn bigger than life), so the round
         // starts at the barrel tip on screen.
-        var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale / GroundZoom;
+        var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * Spitfire.ArtScale / GroundZoom;
         float ch = MathF.Cos(_fm.Heading), sh = MathF.Sin(_fm.Heading), bankSq = MathF.Cos(_fm.Bank * 0.6f);
         var mapMuzzles = new Vector2[Guns.GunCount];
         var view = PlayerView(out _);
@@ -890,7 +890,7 @@ public class Game1 : Game
         if (_phase != Phase.Wrecked)
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
+            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * Spitfire.ArtScale;
             var shadowAt = centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s;
             if (_sphereSprite)
             {
@@ -1193,7 +1193,7 @@ public class Game1 : Game
         var s = Scale;
         var zGround = Zoom;
         // Same on-screen size as the player at the same altitude; nearer or further planes scale by perspective.
-        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
+        var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f)));
         var origin = new Vector2(SpriteSphere.Frame / 2f);
         foreach (var c in _craft)
         {
@@ -1425,8 +1425,8 @@ public class Game1 : Game
             var ias = _fm.IasMph;
             var stallIas = _fm.StallSpeed(1f) * MathF.Sqrt(_fm.Rho / 0.0023769f) * 0.681818f;
             Row(line++, "AIRSPEED", $"{ias:0} MPH IAS", ias / 500f,
-                _fm.Overspeed ? new Color(255, 94, 94) : new Color(255, 206, 84), stallIas / 500f, FlightModel.VneMph / 500f);
-            Row(line++, "ALTITUDE", $"{_fm.Altitude:N0} FT", _fm.Altitude / FlightModel.CeilingFt, new Color(74, 163, 255));
+                _fm.Overspeed ? new Color(255, 94, 94) : new Color(255, 206, 84), stallIas / 500f, _fm.Airframe.VneMph / 500f);
+            Row(line++, "ALTITUDE", $"{_fm.Altitude:N0} FT", _fm.Altitude / _fm.Airframe.CeilingFt, new Color(74, 163, 255));
             Row(line++, "CLIMB", $"{_fm.VerticalSpeedFpm:+0;-0;0} FT/MIN",
                 (_fm.VerticalSpeedFpm + 6000f) / 12000f, _fm.VerticalSpeedFpm < -50f ? new Color(255, 94, 94) : new Color(94, 224, 160), 0.5f);
         }

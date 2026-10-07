@@ -55,6 +55,8 @@ public sealed class Aircraft
     // ---------------------------------------------------------------- flight
 
     public ControlInputs Controls => Flight.Controls;
+    /// <summary>What it's made of and can stand (Airframe, below); its flight model flies by it.</summary>
+    public Airframe Airframe => Flight.Airframe;
     public Vector3 PositionFt => World.ToFt(Pos, Flight.Altitude);
     public float Altitude { get => Flight.Altitude; set => Flight.Altitude = value; }
     public float Heading { get => Flight.Heading; set => Flight.Heading = value; }
@@ -195,4 +197,49 @@ public sealed class AircraftPart
     public PartState State => DamageModel.StateOf(Hp);
     public bool Gone => Hp <= 0f;
     public string Name => DamageModel.Name(Kind);
+}
+
+/// <summary>
+/// What an aircraft type is made of and can stand, for the flight model to fly: its airframe (weight, wing, drag, engine
+/// and propeller) and its limits (speed, g, stall behaviour, controls). Each aircraft carries one (Aircraft.Airframe),
+/// and its flight model works everything out from it, so a different airframe flies differently on the same inputs.
+/// These are a Spitfire Mk IX's: level speed ~403 mph TAS at ~30,000 ft, ~4,100 ft/min climb at sea level falling to 0
+/// at 51,550 ft, stall ~86 mph, never-exceed 450 mph IAS, dive to ~Mach 0.87 from altitude.
+/// </summary>
+public sealed class Airframe
+{
+    public string Name = "SPITFIRE";
+
+    // ---- Airframe ----
+    public float WeightLb = 7400f, WingArea = 242f, Span = 36.83f;   // lb, sq ft, ft
+    public float CD0 = 0.0195f, OswaldE = 0.55f, CLmax = 1.6f;       // zero-lift drag, span efficiency, max lift coefficient
+    public float PropEff = 0.82f, StaticThrustCapLb = 3500f;         // propeller efficiency; the most thrust it gives at low speed
+    public float IdlePropDragCD = 0.006f;                            // a throttled-back propeller's drag
+
+    /// <summary>Engine power (hp) at full throttle against altitude (ft). Chosen so the climb rates match the real
+    /// aircraft; beyond the table power falls away quickly.</summary>
+    public (float alt, float hp)[] PowerTable =
+    {
+        (0, 1491), (5000, 1477), (10000, 1440), (15000, 1408), (20000, 1353), (25000, 1290),
+        (28000, 1231), (30000, 1180), (35000, 1036), (40000, 843), (43000, 767), (47000, 780),
+        (51550, 840), (56000, 600), (65000, 150),
+    };
+
+    public float AspectRatio => Span * Span / WingArea;
+
+    // ---- Limits ----
+    public float VneMph = 450f;              // never-exceed, indicated
+    public float WaveDragK = 3f;             // compressibility drag above Mach 0.75
+    public float OverspeedDragK = 0.3f;      // structural-limit drag above Vne
+    // Pitch-axis g limits. Level flight is 1 g, so 7 up and -5 down are the same 6 g of change either way: pulling and
+    // pushing the nose have equal authority.
+    public float MaxNPos = 7.0f, MaxNNeg = 5.0f;
+    public float NTurnMax = 7f, NStruct = 12f;     // g at full bank at reference speed; structural limit
+    public float QRef = 160f;                      // dynamic pressure (psf) of ~250 mph at sea level
+    public float StallDragCD = 0.12f;              // separated flow when the wing is over-pulled
+    public float RudderRate = 0.0015f;             // rad per tick of flat yaw at full rudder (about 5 deg/s)
+    public float RudderSlipDragCD = 0.012f;        // extra drag at full rudder
+    public float StallNoseDropDegS = 75f;          // how fast a fully stalled nose falls toward the ground
+    public float MaxClimbDeg = 60f, MaxDiveDeg = 90f;   // steepest flight path the pilot can command
+    public float CeilingFt = 51550f;
 }
