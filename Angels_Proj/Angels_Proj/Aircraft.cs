@@ -22,6 +22,7 @@ public abstract class Aircraft
     public Pilot Pilot;
     public bool IsPlayer;
     public bool Crashed;                                  // hit the ground (the only thing that ends an aircraft)
+    public bool Frozen;                                   // held still in the air (a gun-test target): damage, smoke and fire run, it doesn't fly
     public int Salt;                                      // staggers its fire animation from the others'
 
     // ---------------------------------------------------------------- parts
@@ -191,7 +192,7 @@ public abstract class Aircraft
     /// engine trails smoke (and fire), a leak a thin mist; the flight model flies; the aircraft moves.</summary>
     public void Step(Fx fx, Random rng)
     {
-        Pilot?.Fly(this);
+        if (!Frozen) Pilot?.Fly(this);
         UpdateEngine(1f / 60f);
         Flight.EnginePower = EnginePower;
         if (SmokeStrength > 0f || OnFire || Leaks > 0)
@@ -199,6 +200,7 @@ public abstract class Aircraft
             World.Basis(Flight.Heading, Flight.Gamma, Flight.Bank, out _, out _, out var f);
             fx.EngineTrail(EngineFt() - f * 4f, -f, SmokeStrength, FireStrength, Leaks, IsPlayer);
         }
+        if (Frozen) return;
         Flight.Step(Airframe.RollResponse, rng);
         foreach (var p in Propellers) p.Update(Flight.Throttle, EnginePower > 0f);
         if (Flight.GroundHit && !IsPlayer) Crashed = true;   // (the game handles the player's landings and crashes)

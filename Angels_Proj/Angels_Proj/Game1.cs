@@ -107,6 +107,12 @@ public class Game1 : Game
     private float _lastPointBearing, _lastPointElev;
     private Aircraft _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
+    // Gun test (debug menu): a target held still in the air, and the player held on a sphere round it, facing its centre.
+    private bool _gunTest;
+    private Aircraft _testTarget;
+    private float _testAz, _testEl, _testRange;          // rad round the target from its nose-on side, rad up, feet
+    private const float TestOrbitDegPerPx = 0.3f;        // mouse movement to orbit
+    private const float TestRangeStepFt = 50f;           // per wheel notch
     private Aircraft _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
@@ -202,6 +208,9 @@ public class Game1 : Game
 
     private void Reset()
     {
+        if (_testTarget != null) { _worldModel.Remove(_testTarget); _testTarget = null; }   // (ends a gun test)
+        _gunTest = false;
+        IsMouseVisible = true;
         _worldModel.SpawnPlayer(_pilot, _pos, _arcade);   // a fresh aircraft where the old one was
         _phase = Phase.Flying;
         _particles.Clear();
@@ -358,6 +367,87 @@ public class Game1 : Game
         _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel, mapMuzzles);
     }
 
+    /// <summary>Gun test: clears the sky and puts a Spitfire still in the air ahead, hit boxes on, and holds the player
+    /// on a sphere round it at the guns' convergence range, facing its centre with the sight up. Moving the mouse orbits
+    /// round it, the wheel changes the range, firing works as usual. R (or the menu) ends it.</summary>
+    private void StartGunTest()
+    {
+        if (_phase != Phase.Flying) Reset();
+        _traffic.Clear(_worldModel);
+        _testTarget = new Spitfire(null) { Pos = _pos, Frozen = true };
+        _testTarget.Flight.Altitude = MathF.Max(_fm.Altitude, 3000f);
+        _testTarget.Flight.Heading = 0f;
+        _testTarget.Flight.Speed = 0f;
+        _worldModel.Add(_testTarget);
+        _testAz = MathF.PI;            // behind it
+        _testEl = 0.17f;               // a little above
+        _testRange = Guns.ConvergeFt;
+        _gunTest = true;
+        _showHitboxes = true;
+        _menuOpen = false;
+        _pan = Vector2.Zero;
+        var m = Mouse.GetState();
+        _aimPrev = new Point(m.X, m.Y);
+        _aimSkip = AimWarpSkipTicks;
+        _lastWheel = m.ScrollWheelValue;
+    }
+
+    private void UpdateGunTest(MouseState m)
+    {
+        var vp = GraphicsDevice.Viewport;
+        IsMouseVisible = false;
+        // Orbit by the mouse's movement (the pointer is hidden; only movement counts, recentred near an edge).
+        var now = new Point(m.X, m.Y);
+        if (IsActive)
+        {
+            if (_aimSkip > 0) _aimSkip--;
+            else
+            {
+                float dx = MathHelper.Clamp(now.X - _aimPrev.X, -AimMaxStepPx, AimMaxStepPx);
+                float dy = MathHelper.Clamp(now.Y - _aimPrev.Y, -AimMaxStepPx, AimMaxStepPx);
+                _testAz = MathHelper.WrapAngle(_testAz + MathHelper.ToRadians(dx * TestOrbitDegPerPx));
+                _testEl = MathHelper.Clamp(_testEl - MathHelper.ToRadians(dy * TestOrbitDegPerPx), -1.48f, 1.48f);
+            }
+            _aimPrev = now;
+            if (now.X < vp.Width / 5 || now.X > vp.Width * 4 / 5 || now.Y < vp.Height / 5 || now.Y > vp.Height * 4 / 5)
+            {
+                Mouse.SetPosition(vp.Width / 2, vp.Height / 2);
+                _aimSkip = AimWarpSkipTicks;
+            }
+        }
+        var wheel = m.ScrollWheelValue;
+        _testRange = MathHelper.Clamp(_testRange - (wheel - _lastWheel) / 120f * TestRangeStepFt, 150f, 2000f);
+        _lastWheel = wheel;
+
+        // The player on the sphere round the target's centre, facing it, level wings, standing still.
+        var toMe = new Vector3(MathF.Sin(_testAz) * MathF.Cos(_testEl), MathF.Sin(_testEl), -MathF.Cos(_testAz) * MathF.Cos(_testEl));
+        var me = _testTarget.PositionFt + toMe * _testRange;
+        var look = -toMe;
+        _fm.Heading = MathF.Atan2(look.X, -look.Z);
+        _fm.Gamma = MathF.Asin(MathHelper.Clamp(look.Y, -1f, 1f));
+        _fm.Bank = 0f;
+        _fm.Speed = 0f;
+        _fm.Altitude = me.Y;
+        _pos = new Vector2(me.X, me.Z) * World.PxPerFoot;
+
+        // The world runs on round them: the target's damage, smoke and fire, the rounds in flight, the hit boxes.
+        _fx.Update();
+        _time += 1f / 60f;
+        _worldModel.UpdateOthers(_fx, _rng);
+        _boxEdges.Clear();
+        foreach (var p in _worldModel.Others) World.HitBoxEdges(p, _boxEdges);
+        _gunsight.DebugLines.Clear();
+        foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.color));
+        _guns.Update(_worldModel, Player, _fx);
+        _guns.Tracers(_tracers);
+        _firing = false;
+        _tracked = _testTarget;
+        _hovered = null;
+        _mouseAim = false;
+        _sightAlpha = 1f;
+        if (_kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
+    }
+
     private bool Pressed(Keys k) => _kb.IsKeyDown(k) && !_prevKb.IsKeyDown(k);
 
     /// <summary>Typing the secret code at any time (none of its letters are flight controls) toggles the debug menu.</summary>
@@ -377,7 +467,7 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "HIT OWN ENGINE", "SPAWN TARGETS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "HIT OWN ENGINE", "GUN TEST", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
@@ -386,6 +476,7 @@ public class Game1 : Game
         2 => _hudBars ? "ON" : "OFF",
         3 => _showHitboxes ? "ON" : "OFF",
         4 => $"{MathF.Ceiling(_dmg.EngineHp):0} HP",
+        5 => _gunTest ? "ON" : "OFF",
         _ => "",
     };
 
@@ -402,6 +493,9 @@ public class Game1 : Game
             case 3: _showHitboxes = !_showHitboxes; break;
             case 4: _dmg.DamagePart(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
             case 5:
+                if (_gunTest) Reset(); else StartGunTest();
+                break;
+            case 6:
                 _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
@@ -461,6 +555,12 @@ public class Game1 : Game
         // A fresh press only: the press that closed the debug menu is still held on the next tick and mustn't quit the game.
         if (Pressed(Keys.Escape)) Exit();
         if (Pressed(Keys.R)) Reset();
+        if (_gunTest)
+        {
+            UpdateGunTest(m);
+            base.Update(gameTime);
+            return;
+        }
 
         var vp = GraphicsDevice.Viewport;
 

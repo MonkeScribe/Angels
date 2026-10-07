@@ -68,6 +68,14 @@ public sealed class Traffic
         return Build(world, pos, alt, heading, _rng.Next(2, 6), Rand(-0.0025f, 0.0025f), Rand(0.5f, 0.7f), Rand(240f, 290f));
     }
 
+    /// <summary>Takes every formation out of the world (new ones come in on the next Update).</summary>
+    public void Clear(World world)
+    {
+        foreach (var f in _formations)
+            foreach (var a in f.Planes) world.Remove(a);
+        _formations.Clear();
+    }
+
     /// <summary>Puts a small formation dead ahead of the player at the same height (a debug aid for target practice).</summary>
     public void SpawnAhead(World world, Vector2 playerPos, float altitude, float heading, float distanceFt, float mph)
     {
