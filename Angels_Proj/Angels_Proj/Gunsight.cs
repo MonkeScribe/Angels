@@ -156,7 +156,7 @@ public sealed class Gunsight
     private static Color Premul(Vector3 rgb, float a) => new(rgb.X * a, rgb.Y * a, rgb.Z * a, a);
 
     public void Render(int width, int height, Vector3 camPos, float heading, float pitch, float bank,
-        IReadOnlyList<Traffic.Plane> planes, Fx fx, List<Tracer> tracers, float throttle)
+        IReadOnlyList<Aircraft> planes, Fx fx, List<Tracer> tracers, float throttle)
     {
         EnsureTargets(width, height);
         World.Basis(heading, pitch, bank, out var right, out var up, out var fwd);
@@ -289,7 +289,7 @@ public sealed class Gunsight
         return from;
     }
 
-    private void BuildGeometry(Vector3 camPos, float alt, Vector3 fwd, IReadOnlyList<Traffic.Plane> planes, Fx fx, List<Tracer> tracers)
+    private void BuildGeometry(Vector3 camPos, float alt, Vector3 fwd, IReadOnlyList<Aircraft> planes, Fx fx, List<Tracer> tracers)
     {
         _tris.Clear(); _lines.Clear(); _blend.Clear(); _blendLines.Clear(); _bills.Clear(); _billVerts.Clear();
 
@@ -387,7 +387,7 @@ public sealed class Gunsight
             if (p.Damage.OnFire)
             {
                 var strength = p.Damage.FireStrength;
-                var engine = Traffic.EngineAt(p, pf, pu) - camPos;
+                var engine = p.EngineFt() - camPos;
                 float bx = Vector3.Dot(-pf, rightV), by = Vector3.Dot(-pf, upV), bl = MathF.Sqrt(bx * bx + by * by);
                 var flameDir = bl > 0.05f ? (rightV * bx + upV * by) / bl : upV;
                 var roll = bl > 0.05f ? MathF.Atan2(bx, by) : 0f;

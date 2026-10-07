@@ -5,9 +5,9 @@ using Microsoft.Xna.Framework;
 namespace Angels_Proj;
 
 /// <summary>
-/// The world: the aircraft in it (for now just the player's; the other traffic is still in Traffic), and the shared
-/// conventions everything uses. The top-down map works in "world px" (x east, y south) and the 3D gunsight works in
-/// feet with X = east, Y = up, Z = south (so north is -Z and everything is right-handed).
+/// The world: every aircraft in it, the player's and the others (which Traffic brings in and takes away), the hits
+/// on them, and the shared conventions everything uses. The top-down map works in "world px" (x east, y south) and the
+/// 3D gunsight works in feet with X = east, Y = up, Z = south (so north is -Z and everything is right-handed).
 /// </summary>
 public sealed class World
 {
@@ -23,8 +23,129 @@ public sealed class World
         if (Player != null) Planes.Remove(Player);
         Player = new Aircraft(new FlightModel { VerticalRateScale = arcade ? 2f : 1f }, pilot, sphere) { Pos = pos, IsPlayer = true };
         Planes.Add(Player);
+        Refresh();
         return Player;
     }
+
+    private readonly List<Aircraft> _others = new();
+
+    /// <summary>Every aircraft but the player's.</summary>
+    public IReadOnlyList<Aircraft> Others => _others;
+
+    /// <summary>Rounds that have hit something.</summary>
+    public int Hits { get; private set; }
+
+    public void Add(Aircraft a) { Planes.Add(a); Refresh(); }
+    public void Remove(Aircraft a) { Planes.Remove(a); Refresh(); }
+
+    private void Refresh()
+    {
+        _others.Clear();
+        foreach (var a in Planes) if (a != Player) _others.Add(a);
+    }
+
+    /// <summary>Every aircraft but the player's flies a tick (the game steps the player itself, once it has worked out the
+    /// player's inputs). Any that hit the ground are gone.</summary>
+    public void UpdateOthers(Fx fx, Random rng)
+    {
+        for (var i = Planes.Count - 1; i >= 0; i--)
+        {
+            var a = Planes[i];
+            if (a == Player) continue;
+            a.Step(fx, rng);
+            if (a.Crashed) Planes.RemoveAt(i);
+        }
+        Refresh();
+    }
+
+    // ---------------------------------------------------------------- hits
+
+    /// <summary>Hit scan: the nearest aircraft (other than ignore) whose hit boxes the ray passes through within maxRange
+    /// feet, and the part hit. A part already gone lets rounds through.</summary>
+    public bool RayHit(Vector3 origin, Vector3 dir, float maxRange, Aircraft ignore, out Aircraft hit, out float distance, out Part part)
+    {
+        hit = null; distance = maxRange; part = Part.Fuselage;
+        foreach (var p in Planes)
+        {
+            if (p == ignore) continue;
+            Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
+            var rel = origin - p.PositionFt;
+            if (rel.LengthSquared() > (maxRange + 40f) * (maxRange + 40f)) continue;
+            // Into the plane's frame (local +z is backwards, so forward is -z).
+            Vector3 o = new(Vector3.Dot(rel, r), Vector3.Dot(rel, u), Vector3.Dot(rel, -f));
+            Vector3 d = new(Vector3.Dot(dir, r), Vector3.Dot(dir, u), Vector3.Dot(dir, -f));
+            foreach (var b in DamageTuning.Fighter)
+                if (p.Parts[(int)b.Part] > 0f && Slab(o, d, b.Min, b.Max, out var t) && t < distance)
+                {
+                    distance = t; hit = p; part = b.Part;
+                }
+        }
+        return hit != null;
+    }
+
+    /// <summary>A round hits a part of an aircraft (see AircraftDamage.Hit). Returns the hit points the part lost.</summary>
+    public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng)
+    {
+        Hits++;
+        return a.Damage.Hit(part, weapon, impactSpeedFtS, rng);
+    }
+
+    /// <summary>The twelve edges of every hit box of an aircraft, as pairs of world points (feet), coloured by the state of
+    /// the part the box belongs to. For the debug hit box view.</summary>
+    public static void HitBoxEdges(Aircraft p, List<(Vector3 a, Vector3 b, Color color)> into)
+    {
+        var boxes = new List<(Vector3[] c, Part part)>();
+        HitBoxCorners(p, boxes);
+        foreach (var (c, part) in boxes)
+        {
+            var color = DamageModel.StateColor(DamageModel.StateOf(p.Parts[(int)part]));
+            for (var i = 0; i < 8; i++)
+                for (var bit = 1; bit <= 4; bit <<= 1)
+                    if ((i & bit) == 0) into.Add((c[i], c[i | bit], color));
+        }
+    }
+
+    /// <summary>The eight world corners (feet) of each of an aircraft's hit boxes, with the part each box belongs to.</summary>
+    public static void HitBoxCorners(Aircraft p, List<(Vector3[] corners, Part part)> into)
+    {
+        Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
+        var centre = p.PositionFt;
+        foreach (var bx in DamageTuning.Fighter)
+        {
+            var c = new Vector3[8];
+            for (var i = 0; i < 8; i++)
+            {
+                float x = (i & 1) == 0 ? bx.Min.X : bx.Max.X, y = (i & 2) == 0 ? bx.Min.Y : bx.Max.Y, z = (i & 4) == 0 ? bx.Min.Z : bx.Max.Z;
+                c[i] = centre + r * x + u * y + (-f) * z;   // local +z is backwards
+            }
+            into.Add((c, bx.Part));
+        }
+    }
+
+    private static bool Slab(Vector3 o, Vector3 d, Vector3 min, Vector3 max, out float t)
+    {
+        float t0 = 0f, t1 = float.MaxValue;
+        for (var a = 0; a < 3; a++)
+        {
+            float oa = a == 0 ? o.X : a == 1 ? o.Y : o.Z, da = a == 0 ? d.X : a == 1 ? d.Y : d.Z;
+            float lo = a == 0 ? min.X : a == 1 ? min.Y : min.Z, hi = a == 0 ? max.X : a == 1 ? max.Y : max.Z;
+            if (MathF.Abs(da) < 1e-6f)
+            {
+                if (oa < lo || oa > hi) { t = 0; return false; }
+            }
+            else
+            {
+                float ta = (lo - oa) / da, tb = (hi - oa) / da;
+                if (ta > tb) (ta, tb) = (tb, ta);
+                t0 = MathF.Max(t0, ta); t1 = MathF.Min(t1, tb);
+                if (t0 > t1) { t = 0; return false; }
+            }
+        }
+        t = t0;
+        return true;
+    }
+
+    // ---------------------------------------------------------------- conventions
 
     public const float PxPerFoot = 1.2f;
 

@@ -81,8 +81,8 @@ public class Game1 : Game
     private readonly Fx _fx = new();
     private EffectArt _effects;                 // fire animation and smoke sprites
     private float _time;                        // seconds of play, for animations
-    private readonly Traffic _traffic;
-    private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
+    private Traffic _traffic;                    // brings AI formations into the world and takes them away
+    private readonly System.Collections.Generic.List<Aircraft> _craft = new(); // draw-sorted copy
     private Gunsight _gunsight;
     private RenderTarget2D _world, _w2, _w4, _w8; // the ground layer, and blurred copies for out-of-focus ground
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
@@ -99,19 +99,19 @@ public class Game1 : Game
     private int _exitHold;                      // ticks left of ignoring the pointer after mouse aim ends
     private Point _aimPrev;                      // the pointer's last reading during mouse aim
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
-    private Traffic.Plane _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
+    private Aircraft _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
     private readonly System.Collections.Generic.List<(Vector2[] poly, float damage)> _hoverZones = new();
     private bool _sphereSprite = true;           // debug menu: the player's plane from the sprite sphere (off: the old pitch views)
     private bool _showHitboxes;                 // debug menu: draw the planes' hit boxes on the map and in the sight
     private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, Color color)> _boxEdges = new();
     private bool _mouseAim;                      // the pointer is captured for mouse aim
     private float _aimYaw;                       // rad: the mouse's heading offset from the target
-    private Traffic.Plane _lastPointed;          // the plane the pointing assist followed last tick, for its rates
+    private Aircraft _lastPointed;          // the plane the pointing assist followed last tick, for its rates
     private int _pointDwell;                     // ticks the mouse has stayed on that plane
     private float _lastPointBearing, _lastPointElev;
-    private Traffic.Plane _lastAimed;            // the target the assist tracked last tick, for its bearing rate
+    private Aircraft _lastAimed;            // the target the assist tracked last tick, for its bearing rate
     private float _lastAimBearing, _lastAimElev;
-    private Traffic.Plane _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
+    private Aircraft _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
     private Spitfire _spitfire;
@@ -139,7 +139,6 @@ public class Game1 : Game
 
     public Game1()
     {
-        _traffic = new Traffic(_fx);
         _worldModel.SpawnPlayer(_pilot, Vector2.Zero, false, null);
         _guns = new Guns(_rng);
         _graphics = new GraphicsDeviceManager(this);
@@ -168,6 +167,7 @@ public class Game1 : Game
         _sphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
         _playerSphere = _sphere;
         Player.Sphere = _playerSphere;
+        _traffic = new Traffic(_sphere);
         _effects = new EffectArt(GraphicsDevice);
         _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere, _effects);
         var vp0 = GraphicsDevice.Viewport;
@@ -279,13 +279,13 @@ public class Game1 : Game
     }
 
     /// <summary>The plane the mouse is over on the map that is also inside the sight's view (nearest to the pointer), if any.</summary>
-    private Traffic.Plane PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect, bool needSight = true)
+    private Aircraft PlaneAimedAt(Vector2 mouse, Vector3 camFt, Vector3 sr, Vector3 su, Vector3 sf, float aspect, bool needSight = true)
     {
         var centre = PlaneScreen();
-        Traffic.Plane best = null;
+        Aircraft best = null;
         var bestD = float.MaxValue;
         var zones = new System.Collections.Generic.List<(Vector2[] poly, float damage)>();
-        foreach (var p in _traffic.All)
+        foreach (var p in _worldModel.Others)
         {
             var f = DistFactor(p.Altitude);
             if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
@@ -310,7 +310,7 @@ public class Game1 : Game
 
     /// <summary>The on-screen targeting box of a traffic plane, as the sprite is drawn: scaled by its distance and
     /// squashed by its bank and pitch, then turned to its heading. pad grows it outward, in sprite px.</summary>
-    private void SpriteZones(Traffic.Plane p, Vector2 centre, System.Collections.Generic.List<(Vector2[] poly, float damage)> into, float pad = 0f)
+    private void SpriteZones(Aircraft p, Vector2 centre, System.Collections.Generic.List<(Vector2[] poly, float damage)> into, float pad = 0f)
     {
         var s = Scale;
         var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / FlightModel.CeilingFt, 0f, 1f)));
@@ -431,7 +431,7 @@ public class Game1 : Game
             case 4: _sphereSprite = !_sphereSprite; break;
             case 5: _dmg.Damage(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
             case 6:
-                _traffic.SpawnAhead(_pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
+                _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
             default: _menuOpen = false; break;
@@ -542,7 +542,7 @@ public class Game1 : Game
             // and the camera recentres.
             var panMargin0 = PanMarginPx * Scale;
             var following = false;
-            if (_tracked != null && _phase == Phase.Flying && _traffic.All.Contains(_tracked))
+            if (_tracked != null && _phase == Phase.Flying && _worldModel.Others.Contains(_tracked))
             {
                 var tk = Scale * GroundZoom / MathF.Max(0.2f, DistFactor(_tracked.Altitude));
                 var t0 = new Vector2(vp.Width / 2f, vp.Height / 2f) + (_tracked.Pos - _pos) * tk;   // where it is with no pan
@@ -607,14 +607,15 @@ public class Game1 : Game
         }
 
         var hd = 0.5f * MathF.Sqrt(vp.Width * vp.Width + vp.Height * vp.Height);
-        _traffic.Update(_pos, _fm.Altitude, f => hd * f / (Scale * GroundZoom), DistFactor);
+        _traffic.Update(_worldModel, _pos, _fm.Altitude, f => hd * f / (Scale * GroundZoom), DistFactor);
+        _worldModel.UpdateOthers(_fx, _rng);   // the AI aircraft fly (the player's is flown below, once its inputs are known)
         _fx.Update();
         _time += 1f / 60f;
         _boxEdges.Clear();
-        if (_showHitboxes) foreach (var p in _traffic.All) Traffic.HitBoxEdges(p, _boxEdges);
+        if (_showHitboxes) foreach (var p in _worldModel.Others) World.HitBoxEdges(p, _boxEdges);
         _gunsight.DebugLines.Clear();
         foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.color));
-        _guns.Update(_traffic, _fx);
+        _guns.Update(_worldModel, Player, _fx);
         _guns.Tracers(_tracers);
         _firing = false;
         _spitfire.Update(_fm.Throttle, _phase == Phase.Flying && _dmg.EnginePower > 0f);   // a dead engine's propeller winds down
@@ -628,7 +629,7 @@ public class Game1 : Game
         _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
         if (_hovered != null && _showHitboxes) SpriteZones(_hovered, PlaneScreen(), _hoverZones); // drawn in the HITBOXES debug view only
-        if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) ||
+        if (_tracked == null || _phase != Phase.Flying || !_worldModel.Others.Contains(_tracked) ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
@@ -669,7 +670,7 @@ public class Game1 : Game
         // a second points the plane at it, banking toward its bearing and pitching gently to its elevation, both a
         // little ahead along its motion, until it swings into the sight and the aimer above takes over. The wait
         // means brushing over a plane in passing does nothing.
-        Traffic.Plane pointAt = null;
+        Aircraft pointAt = null;
         float pointBearing = 0f, pointElevDeg = 0f;
         if (!target && _phase == Phase.Flying)
             pointAt = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
@@ -848,10 +849,10 @@ public class Game1 : Game
         var sightRect = Instruments.GunsightRect(vp.Bounds, s);
         if (_sightAlpha > 0.01f)
             _gunsight.Render(sightRect.Width, sightRect.Height, World.ToFt(_pos, _fm.Altitude), _fm.Heading, _fm.Gamma, _fm.Bank,
-                _traffic.All, _fx, _tracers, _fm.Throttle);
+                _worldModel.Others, _fx, _tracers, _fm.Throttle);
 
         _craft.Clear();
-        _craft.AddRange(_traffic.All);
+        _craft.AddRange(_worldModel.Others);
         _craft.Sort((a, b) => a.Altitude.CompareTo(b.Altitude));
 
         // The ground is only inside the view box while we are within ViewBoxFt of it. As we climb it first goes
@@ -1432,7 +1433,7 @@ public class Game1 : Game
         var ty = y + line * rowH;
         PixelFont.Draw(_sb, _pixel, $"TAS {_fm.TasMph:0} MPH   MACH {_fm.Mach:0.00}   G {_fm.LoadFactor:0.0}", new Vector2(x, ty), px, white);
         PixelFont.Draw(_sb, _pixel, $"PITCH {MathHelper.ToDegrees(_fm.Gamma):+0;-0;0}  SET {_fm.PitchCmdDeg:+0;-0;0}", new Vector2(x, ty + 10 * px), px, white);
-        PixelFont.Draw(_sb, _pixel, $"HITS {_traffic.Hits}", new Vector2(x, ty + 20 * px), px, white);
+        PixelFont.Draw(_sb, _pixel, $"HITS {_worldModel.Hits}", new Vector2(x, ty + 20 * px), px, white);
         if (_arcade) PixelFont.Draw(_sb, _pixel, "ARCADE", new Vector2(x, ty + 30 * px), px, new Color(255, 206, 84));
 
         var wy = ty + 42 * px;

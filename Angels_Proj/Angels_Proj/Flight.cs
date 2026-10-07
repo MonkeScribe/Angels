@@ -46,7 +46,7 @@ public sealed class FlightModel
     private const float TurnCoeff = 0.058f;
     private const float MphPerUnit = 68f;          // Skyward's speed unit, used by the turn-rate curve
 
-    private const float Mph = 0.681818f;           // ft/s -> mph
+    public const float Mph = 0.681818f;            // ft/s -> mph
     private const float Rho0 = 0.0023769f;
     private const float Dt = 1f / 60f;
 
@@ -81,6 +81,7 @@ public sealed class FlightModel
     private const float AimKeyRateDeg = 0.25f;     // W/S trim rate while aiming, deg per tick
     private bool _keysBlocked;                     // a pitch key held when the aimer came up is ignored until it is let go
     public float Bank, Heading;
+    public bool SnapOnRelease = true;               // let go of the stick: the pitch settles at the nearest 10 degrees
     public float VerticalRateScale = 1f;           // 1 = realistic; 2 = arcade (altitude changes twice as fast)
 
     // Read-outs.
@@ -198,15 +199,17 @@ public sealed class FlightModel
         }
         else if (pitchKey != 0f)
         {
-            // While a key is held the command runs ahead of the nose.
-            PitchCmdDeg = pitchKey > 0 ? MathF.Min(MaxClimbDeg, PitchCmdDeg + 3f) : MathF.Max(-MaxDiveDeg, PitchCmdDeg - 3f);
+            // While the stick is held the command runs ahead of the nose, as fast as the stick is pushed (full stick,
+            // 3 degrees a tick).
+            PitchCmdDeg = MathHelper.Clamp(PitchCmdDeg + pitchKey * 3f, -MaxDiveDeg, MaxClimbDeg);
             _pitchHeld = true;
             _wheelSteered = false; // the keys take over from the wheel
         }
         else if (_pitchHeld)
         {
-            // On release, settle at the detent nearest where the nose actually is, not where the command got to.
-            PitchCmdDeg = SnapPitch(MathHelper.ToDegrees(Gamma));
+            // On release, settle at the detent nearest where the nose actually is, not where the command got to
+            // (a help for the player; an AI pilot's stick isn't snapped).
+            if (SnapOnRelease) PitchCmdDeg = SnapPitch(MathHelper.ToDegrees(Gamma));
             _pitchHeld = false;
         }
         Bank += (targetBank - Bank) * bankResponse;

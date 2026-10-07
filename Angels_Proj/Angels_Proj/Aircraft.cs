@@ -16,11 +16,30 @@ public sealed class Aircraft
     public SpriteSphere Sphere;                           // its pictures (the type's look)
     public Pilot Pilot;
     public bool IsPlayer;
+    public bool Crashed;                                  // hit the ground (the only thing that ends an aircraft)
+    public int Salt;                                      // staggers its fire animation from the others'
     /// <summary>How quickly it rolls to the bank its pilot asks for: the fraction of the gap closed each tick.</summary>
     public float BankResponse = 0.18f;
 
     public ControlInputs Controls => Flight.Controls;
     public Vector3 PositionFt => World.ToFt(Pos, Flight.Altitude);
+
+    // Its attitude, from the flight model.
+    public float Altitude { get => Flight.Altitude; set => Flight.Altitude = value; }
+    public float Heading { get => Flight.Heading; set => Flight.Heading = value; }
+    public float Pitch => Flight.Gamma;
+    public float Bank => Flight.Bank;
+    public float[] Parts => Damage.Parts;                 // hit points of each Part (Damage.cs)
+
+    /// <summary>Its velocity, ft/s in the gunsight's world frame.</summary>
+    public Vector3 VelocityFt
+    {
+        get
+        {
+            World.Basis(Flight.Heading, Flight.Gamma, Flight.Bank, out _, out _, out var f);
+            return f * Flight.Speed;
+        }
+    }
 
     public Aircraft(FlightModel flight, Pilot pilot, SpriteSphere sphere = null)
     {
@@ -49,6 +68,7 @@ public sealed class Aircraft
             fx.EngineTrail(EngineFt() - f * 4f, -f, Damage.SmokeStrength, Damage.FireStrength, Damage.Leaks, IsPlayer);
         }
         Flight.Step(BankResponse, rng);
+        if (Flight.GroundHit && !IsPlayer) Crashed = true;   // (the game handles the player's landings and crashes)
         var dir = new Vector2(MathF.Sin(Flight.Heading), -MathF.Cos(Flight.Heading));
         Pos += dir * Flight.GroundSpeed * World.PxPerFoot / 60f;
     }

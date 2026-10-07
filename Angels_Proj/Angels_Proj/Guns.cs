@@ -155,7 +155,7 @@ public sealed class Guns
     }
 
     /// <summary>Moves every round one tick and resolves hits along the way.</summary>
-    public void Update(Traffic traffic, Fx fx)
+    public void Update(World world, Aircraft shooter, Fx fx)
     {
         const float dt = 1f / 60f;
         for (var i = Rounds.Count - 1; i >= 0; i--)
@@ -165,11 +165,11 @@ public sealed class Guns
             var vel = r.Vel - r.Vel * (DragK * speed * dt) - new Vector3(0f, G * dt, 0f);
             var step = (r.Vel + vel) * 0.5f * dt;
             var len = step.Length();
-            if (len > 0.01f && traffic.RayHit(r.Pos, step / len, len, out var plane, out var dist, out var part))
+            if (len > 0.01f && world.RayHit(r.Pos, step / len, len, shooter, out var plane, out var dist, out var part))
             {
                 var at = r.Pos + step / len * dist;
                 // The damage roll uses the round's speed relative to the target (Damage.cs).
-                traffic.Hit(plane, part, DamageTuning.Browning303, (r.Vel - Traffic.Velocity(plane)).Length());
+                world.Hit(plane, part, DamageTuning.Browning303, (r.Vel - plane.VelocityFt).Length(), _rng);
                 if (ShowEffects) fx.Spark(at);
                 Rounds.RemoveAt(i);
                 continue;
