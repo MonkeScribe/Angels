@@ -1,14 +1,31 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.Xna.Framework;
 
 namespace Angels_Proj;
 
 /// <summary>
-/// Shared world conventions. The top-down map works in "world px" (x east, y south) and the 3D gunsight
-/// works in feet with X = east, Y = up, Z = south (so north is -Z and everything is right-handed).
+/// The world: the aircraft in it (for now just the player's; the other traffic is still in Traffic), and the shared
+/// conventions everything uses. The top-down map works in "world px" (x east, y south) and the 3D gunsight works in
+/// feet with X = east, Y = up, Z = south (so north is -Z and everything is right-handed).
 /// </summary>
-public static class World
+public sealed class World
 {
+    /// <summary>Every aircraft in the world.</summary>
+    public readonly List<Aircraft> Planes = new();
+
+    /// <summary>The player's aircraft.</summary>
+    public Aircraft Player { get; private set; }
+
+    /// <summary>A fresh aircraft for the player at pos (world px), replacing any old one. arcade doubles the altitude rates.</summary>
+    public Aircraft SpawnPlayer(Pilot pilot, Vector2 pos, bool arcade, SpriteSphere sphere)
+    {
+        if (Player != null) Planes.Remove(Player);
+        Player = new Aircraft(new FlightModel { VerticalRateScale = arcade ? 2f : 1f }, pilot, sphere) { Pos = pos, IsPlayer = true };
+        Planes.Add(Player);
+        return Player;
+    }
+
     public const float PxPerFoot = 1.2f;
 
     /// <summary>

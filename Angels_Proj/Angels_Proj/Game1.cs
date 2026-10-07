@@ -80,7 +80,6 @@ public class Game1 : Game
     private SpriteSphere _playerSphere; // the player's, the same sphere (the late-war one is still there: SpriteSphere.LoadLateWar)
     private readonly Fx _fx = new();
     private EffectArt _effects;                 // fire animation and smoke sprites
-    private AircraftDamage _dmg = new();        // the player's damage, fuel, leaks and fire (Damage.cs)
     private float _time;                        // seconds of play, for animations
     private readonly Traffic _traffic;
     private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
@@ -117,8 +116,13 @@ public class Game1 : Game
     private bool _firing;
     private Spitfire _spitfire;
 
-    private Vector2 _pos;      // world position of the plane (world px at 720p; screen centre)
-    private FlightModel _fm = new();
+    private readonly World _worldModel = new();  // the aircraft in the world (World.cs); the player's is Player
+    private readonly PlayerPilot _pilot = new(); // the player as a pilot: keys and mouse -> the aircraft's control inputs
+    private Aircraft Player => _worldModel.Player;
+    // Shorthands for the player's aircraft: its flight model, its damage, and its position (world px at 720p; screen centre).
+    private FlightModel _fm => Player.Flight;
+    private AircraftDamage _dmg => Player.Damage;
+    private Vector2 _pos { get => Player.Pos; set => Player.Pos = value; }
     private Instruments _instruments;
     private int _lastWheel;
     private bool _lastMiddle;
@@ -136,6 +140,7 @@ public class Game1 : Game
     public Game1()
     {
         _traffic = new Traffic(_fx);
+        _worldModel.SpawnPlayer(_pilot, Vector2.Zero, false, null);
         _guns = new Guns(_rng);
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
@@ -162,6 +167,7 @@ public class Game1 : Game
         _instruments = new Instruments(GraphicsDevice, _pixel);
         _sphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
         _playerSphere = _sphere;
+        Player.Sphere = _playerSphere;
         _effects = new EffectArt(GraphicsDevice);
         _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere, _effects);
         var vp0 = GraphicsDevice.Viewport;
@@ -202,8 +208,7 @@ public class Game1 : Game
 
     private void Reset()
     {
-        _fm = new FlightModel { VerticalRateScale = _arcade ? 2f : 1f };
-        _dmg = new AircraftDamage();
+        _worldModel.SpawnPlayer(_pilot, _pos, _arcade, _playerSphere);   // a fresh aircraft where the old one was
         _phase = Phase.Flying;
         _particles.Clear();
         _pan = Vector2.Zero;
@@ -771,8 +776,8 @@ public class Game1 : Game
         }
 
         // Throttle: Shift up, Z down. Pitch: S nose up (climb), W nose down (dive); release settles to the nearest 10 degrees.
-        var throttleKey = (kb.IsKeyDown(Keys.LeftShift) || kb.IsKeyDown(Keys.RightShift)) ? 1f : kb.IsKeyDown(Keys.Z) ? -1f : 0f;
-        var pitchKey = (kb.IsKeyDown(Keys.S) ? 1f : 0f) - (kb.IsKeyDown(Keys.W) ? 1f : 0f);
+        _pilot.ReadKeys(kb);
+        var pitchKey = _pilot.PitchKey;
 
         // Mouse wheel: each notch swings the nose, and it stops dead where the wheel stops. Notches are fine
         // steps while the aimer is up.
@@ -809,27 +814,12 @@ public class Game1 : Game
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
         }
 
-        // The engine: its damage sets the power available (50 hp, half the thrust), the fuel burns and leaks, and a fire
-        // burns on while the throttle is up. A damaged engine trails black smoke (and fire), a leak a thin mist.
-        _dmg.Update(1f / 60f, _fm.Throttle, true);
-        _fm.EnginePower = _dmg.EnginePower;
-        if (_dmg.SmokeStrength > 0f || _dmg.OnFire || _dmg.Leaks > 0)
-        {
-            World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out _, out var eu, out var ef);
-            var engine = World.ToFt(_pos, _fm.Altitude) + ef * 11f - eu * 0.5f;
-            _fx.EngineTrail(engine - ef * 4f, -ef, _dmg.SmokeStrength, _dmg.FireStrength, _dmg.Leaks, true);
-        }
-        // The player's inputs, as every pilot gives them (Controls.cs): the throttle lever moves while Shift/Z is held,
-        // W/S is the elevator, the bank wanted from the mouse is the ailerons, A/D the rudder.
-        var ctl = _fm.Controls;
-        ctl.Throttle += throttleKey * 0.012f;
-        ctl.Pitch = pitchKey;
-        ctl.Roll = targetBank / FlightModel.MaxBank;
-        ctl.Yaw = (kb.IsKeyDown(Keys.D) ? 1f : 0f) - (kb.IsKeyDown(Keys.A) ? 1f : 0f);
-        _fm.Step(BankResponse, _rng);
+        // The player's aircraft flies a tick: the pilot (keys, and the bank wanted from the mouse) sets its control inputs,
+        // then its engine, damage and flight model do the rest and it moves (Aircraft.Step).
+        _pilot.Bank = targetBank / FlightModel.MaxBank;
+        Player.BankResponse = BankResponse;
+        Player.Step(_fx, _rng);
         if (kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
-        dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
-        _pos += dir * _fm.GroundSpeed * PxPerFoot / 60f;
 
         var hit = CheckScenery();
         if (hit != null) Wreck(hit);
