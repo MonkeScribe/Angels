@@ -7,9 +7,9 @@ namespace Angels_Proj;
 
 /// <summary>
 /// The gunsight: a window in the instrument panel showing a real 3D view straight down the nose. Planes are
-/// low-poly models in their own colours over a gridded green ground and a blue sky. Nothing is hazed; instead
-/// the view has a shallow depth of field, like looking through a sight with your eye focused close: the scene
-/// is rendered in distance slabs and the further slabs are blurred. Your own spinning propeller sits in front
+/// low-poly models in their own colours over a gridded green ground and a blue sky. Nothing is hazed or fogged:
+/// only flying into a cloud thins it out. (An optional depth of field, SIGHT BLUR in the debug menu, renders the scene
+/// in distance slabs and blurs the further ones.) Your own spinning propeller sits in front
 /// as a translucent smear, and the edges are darkened, so the view is deliberately not a clean second screen.
 /// The reticle is drawn on top by the overlay.
 /// </summary>
@@ -18,6 +18,7 @@ public sealed class Gunsight
     public struct Tracer { public Vector3 A, B; public int Life; public float Glow; }
 
     private const float HFovDeg = 18f, SkyRadius = 900_000f; // square view, so 18 degrees each way: the reticle's worth
+    private const float GroundRadius = 600_000f;             // the ground disc: well inside the sky dome, out to the horizon
 
     // Distance slabs, far to near, in feet, and how soft each is (0 sharp, 1..3 progressively blurrier).
     private static readonly (float near, float far, int blur)[] Bands =
@@ -25,6 +26,13 @@ public sealed class Gunsight
         (3500f, 2_000_000f, 3),
         (1800f, 3500f, 2),
         (900f, 1800f, 1),
+        (8f, 900f, 0),
+    };
+
+    // With the blur off: the same scene in two sharp slabs (two keep the depth buffer precise near and far).
+    private static readonly (float near, float far, int blur)[] SharpBands =
+    {
+        (900f, 2_000_000f, 0),
         (8f, 900f, 0),
     };
 
@@ -48,7 +56,7 @@ public sealed class Gunsight
     public Texture2D Texture => _final;
 
     // Debug: switch the clouds or the depth-of-field blur off, and what the last frame drew (for the PERF overlay).
-    public bool ShowClouds = true, Blur = true;
+    public bool ShowClouds = true, Blur = false;
     public int CloudsDrawn;
     public float CloudFill;      // the clouds' quads added up, in whole views: how many times over they cover the sight
 
@@ -182,7 +190,7 @@ public sealed class Gunsight
         // else long) is automatically split into sharp-near and soft-far parts.
         _gd.SetRenderTarget(_final);
         _gd.Clear(Color.Transparent);
-        foreach (var (near, far, blur) in Bands)
+        foreach (var (near, far, blur) in Blur ? Bands : SharpBands)
         {
             _gd.SetRenderTarget(_work);
             _gd.Clear(ClearOptions.Target | ClearOptions.DepthBuffer, Color.Transparent, 1f, 0);
@@ -319,45 +327,43 @@ public sealed class Gunsight
                 _tris.Add(Vtx(a, rings[j].col)); _tris.Add(Vtx(c, rings[j + 1].col)); _tris.Add(Vtx(d, rings[j + 1].col));
             }
 
-        // Ground: only the part inside the view box, a disc of radius sqrt(box^2 - alt^2) beneath us (it shrinks
-        // to nothing as we climb to the box height). It fades to sky colour toward the box edge, so it is replaced
-        // by sky rather than ending in a line, and comes back as we dive.
+        // Ground: one flat colour out to the horizon at any height, with no haze. (The view box still limits what is
+        // drawn on it and in the air: planes, smoke and clouds.)
         const float Box = World.ViewBoxFt;
-        if (alt < Box * 0.995f)
         {
-            var rg = MathF.Sqrt(Box * Box - alt * alt);
-            Color GroundAt(float r) => Color.Lerp(GroundCol, HorizonCol, World.Smooth(0.75f, 1f, MathF.Sqrt(r * r + alt * alt) / Box));
-            var fr = new[] { 0f, 0.25f, 0.5f, 0.7f, 0.85f, 1f };
+            const float rg = GroundRadius;
+            var fr = new[] { 0f, 0.002f, 0.01f, 0.05f, 0.25f, 1f };   // rings, so no triangle is absurdly long
             const int gseg = 40;
             Vector3 G(float r, int k) { var a = k * MathHelper.TwoPi / gseg; return new Vector3(r * MathF.Cos(a), -alt, r * MathF.Sin(a)); }
             for (var j = 0; j < fr.Length - 1; j++)
                 for (var k = 0; k < gseg; k++)
                 {
                     float r0 = fr[j] * rg, r1 = fr[j + 1] * rg;
-                    Color c0 = GroundAt(r0), c1 = GroundAt(r1);
                     Vector3 a = G(r0, k), b = G(r0, (k + 1) % gseg), c = G(r1, (k + 1) % gseg), d = G(r1, k);
-                    _tris.Add(Vtx(a, c0)); _tris.Add(Vtx(b, c0)); _tris.Add(Vtx(c, c1));
-                    _tris.Add(Vtx(a, c0)); _tris.Add(Vtx(c, c1)); _tris.Add(Vtx(d, c1));
+                    _tris.Add(Vtx(a, GroundCol)); _tris.Add(Vtx(b, GroundCol)); _tris.Add(Vtx(c, GroundCol));
+                    _tris.Add(Vtx(a, GroundCol)); _tris.Add(Vtx(c, GroundCol)); _tris.Add(Vtx(d, GroundCol));
                 }
 
-            // Field grid, clipped to the disc, fading with distance like the ground.
+            // Field grid round the point below us, coarser the higher we are. It thins into the plain ground colour toward
+            // its own edge (a fixed number of fields out), so it doesn't end in a line.
             var spacing = Math.Clamp(250f * MathF.Pow(2f, MathF.Round(MathF.Log2(Math.Max(alt, 500f) / 1000f))), 250f, 4000f);
+            var gr = spacing * 40f;
             void GridLine(float offset, bool alongZ)
             {
-                if (MathF.Abs(offset) >= rg) return;
-                var half = MathF.Sqrt(rg * rg - offset * offset);
+                if (MathF.Abs(offset) >= gr) return;
+                var half = MathF.Sqrt(gr * gr - offset * offset);
                 const int pieces = 8;
                 for (var i = 0; i < pieces; i++)
                 {
                     float t0 = -half + 2f * half * i / pieces, t1 = -half + 2f * half * (i + 1) / pieces;
                     Vector3 P(float t) => alongZ ? new Vector3(offset, -alt, t) : new Vector3(t, -alt, offset);
-                    Color Col(float t) => Color.Lerp(GridCol, HorizonCol, World.Smooth(0.75f, 1f, MathF.Sqrt(offset * offset + t * t + alt * alt) / Box));
+                    Color Col(float t) => Color.Lerp(GridCol, GroundCol, World.Smooth(0.5f, 1f, MathF.Sqrt(offset * offset + t * t) / gr));
                     _lines.Add(Vtx(P(t0), Col(t0))); _lines.Add(Vtx(P(t1), Col(t1)));
                 }
             }
-            for (var gx = MathF.Floor((camPos.X - rg) / spacing) * spacing; gx <= camPos.X + rg; gx += spacing) GridLine(gx - camPos.X, true);
+            for (var gx = MathF.Floor((camPos.X - gr) / spacing) * spacing; gx <= camPos.X + gr; gx += spacing) GridLine(gx - camPos.X, true);
             // Z-lines run along X: their offset is relative to the camera's Z; the along-line coordinate is relative to X.
-            for (var gz = MathF.Floor((camPos.Z - rg) / spacing) * spacing; gz <= camPos.Z + rg; gz += spacing) GridLine(gz - camPos.Z, false);
+            for (var gz = MathF.Floor((camPos.Z - gr) / spacing) * spacing; gz <= camPos.Z + gr; gz += spacing) GridLine(gz - camPos.Z, false);
         }
 
         // The view's own axes in the world, which the camera-facing sprites (planes, smoke, clouds) are laid out along.
@@ -366,19 +372,18 @@ public sealed class Gunsight
         var upV = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, inv));
 
         // Planes: each is the view of the sprite sphere that looks at it from where we are, laid flat to the view and
-        // turned so its wings and fin lie right. It fades into the sky toward the edge of the box.
+        // turned so its wings and fin lie right. No haze: fully solid out to the edge of the box.
         foreach (var p in planes)
         {
             var pos = World.ToFt(p.Pos, p.Altitude) - camPos;
             var dist2 = pos.LengthSquared();
             var depth = Vector3.Dot(pos, fwd);
             if (dist2 > Box * Box || depth < 10f) continue;
-            var hazeK = World.Smooth(2200f, Box, MathF.Sqrt(dist2)); // fades to sky colour at the edge of the box
             World.Basis(p.Heading, p.Pitch, p.Bank, out var pr, out var pu, out var pf);
             var sphere = p.Sphere;   // each aircraft is drawn from its own type's pictures
             float sheetW = sphere.Sheet.Width, sheetH = sphere.Sheet.Height;
             var view = sphere.Pick(-pos / MathF.Sqrt(dist2), upV, pf, pr, pu);
-            var a = 1f - hazeK;
+            const float a = 1f;
             var half = sphere.FrameFt / 2f;
             // Half a texel in from the frame's edge, so neighbouring frames don't bleed in.
             var uv = new Vector4((view.Src.X + 0.5f) / sheetW, (view.Src.Y + 0.5f) / sheetH,
@@ -411,7 +416,7 @@ public sealed class Gunsight
             var c = p.Pos - camPos;
             var dist = c.Length();
             if (Vector3.Dot(c, fwd) < 8f || dist > Box) continue;
-            var op = p.Opacity * (1f - World.Smooth(2200f, Box, dist));
+            var op = p.Opacity;
             if (op < 0.01f) continue;
             if (p.Kind == Fx.Kind.Spark)
             {
@@ -441,8 +446,8 @@ public sealed class Gunsight
             var c = World.ToFt(pf.Pos, pf.Height) - camPos;
             var dist = c.Length();
             if (dist > Box || Vector3.Dot(c, fwd) < 60f) continue;
-            // Thin out toward the edge of the box, and when so close that one puff would fill the view.
-            var alpha = (1f - World.Smooth(2000f, Box, dist)) * World.Smooth(120f, 450f, dist) * 0.9f;
+            // Solid out to the edge of the box; only thinning when we fly into one (so close one puff would fill the view).
+            var alpha = World.Smooth(120f, 450f, dist) * 0.9f;
             if (alpha <= 0.01f) continue;
             var halfW = 256f * pf.Size / World.PxPerFoot / 2f; // sprite world px -> feet
             var halfH = halfW * 160f / 256f;
