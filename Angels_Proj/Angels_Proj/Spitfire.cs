@@ -11,8 +11,8 @@ namespace Angels_Proj;
 /// </summary>
 public sealed class Spitfire : Aircraft
 {
-    public Spitfire(Pilot pilot, SpriteSphere sphere)
-        : base(MakeAirframe(), HitBoxes, Armor, Integrity, DamageMultiplier, Look, pilot, sphere) { }
+    public Spitfire(Pilot pilot)
+        : base(MakeAirframe(), HitBoxes, Armor, Integrity, DamageMultiplier, Look, pilot) { }
 
     /// <summary>A fresh Spitfire airframe (each aircraft gets its own, so one can be changed without the others).</summary>
     public static Airframe MakeAirframe() => new()
@@ -55,15 +55,30 @@ public sealed class Spitfire : Aircraft
 
     // ---- Look ----
 
-    /// <summary>One three-bladed propeller (early war, de Havilland), 10 ft 9 in across, its hub on the nose of the
-    /// early-war sprite sphere; the engine fire shows a little behind it on the cowling.</summary>
+    /// <summary>Drawn from the early-war sheet. One three-bladed propeller (de Havilland), 10 ft 9 in across, its hub on
+    /// that sheet's nose; the engine fire shows a little behind it on the cowling.</summary>
     public static readonly AircraftLook Look = new()
     {
+        Sheet = new SpriteSheetSpec
+        {
+            Path = "Content/Sprites/spitfire_oldwar/spitfire_sheet.png",
+            SpanPx = 234f, SpanFt = 37.2f, AzZeroDeg = 0f,
+            MuzzleShift = new Vector3(-1.3f, 0f, -0.55f),
+        },
         Propellers = new[]
         {
             new PropellerSpec { Hub = new Vector3(12.7f, 0f, -0.55f), Blades = 3, RadiusFt = 5.45f, SpinnerFt = 1.0f, Turn = 1f },
         },
         FirePoints = new[] { new Vector3(9.2f, 0f, -0.15f) },
+    };
+
+    /// <summary>The late-war sheet, for a later mark when it gets its own type: its propeller has 4 blades on a hub at
+    /// (14.6, 0, -1.25).</summary>
+    public static readonly SpriteSheetSpec LateWarSheet = new()
+    {
+        Path = "Content/Sprites/spitfire3d/spitfire_sheet.png",
+        SpanPx = 234f, SpanFt = 37.2f, AzZeroDeg = 0f,
+        MuzzleShift = new Vector3(0.7f, 0f, -1.25f),
     };
 
     // ---- Parts, in Part order: Engine, Canopy, LeftWing, RightWing, Tail, Fuselage ----

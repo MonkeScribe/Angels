@@ -17,7 +17,8 @@ public abstract class Aircraft
 {
     public Vector2 Pos;                                   // world px (map)
     public readonly FlightModel Flight;
-    public SpriteSphere Sphere;                           // its pictures (the type's look)
+    private readonly SpriteSheetSpec _sheet;
+    private SpriteSphere _sphere;
     public Pilot Pilot;
     public bool IsPlayer;
     public bool Crashed;                                  // hit the ground (the only thing that ends an aircraft)
@@ -40,6 +41,10 @@ public abstract class Aircraft
 
     /// <summary>Where an engine fire is drawn on it, in its sprite sphere's frame (feet: x nose, y left, z up).</summary>
     public readonly Vector3[] FirePoints;
+
+    /// <summary>Its pictures from every angle: the sprite sheet its type names (AircraftLook.Sheet), loaded the first time
+    /// it is drawn and shared by every aircraft of the type.</summary>
+    public SpriteSphere Sphere => _sphere ??= SpriteSphere.For(_sheet);
 
     // ---------------------------------------------------------------- fuel, leaks, fire
 
@@ -87,17 +92,17 @@ public abstract class Aircraft
     /// <param name="airframe">Its airframe and limits, which its flight model flies by.</param>
     /// <param name="hitBoxes">Its hit boxes, each tagged with its part.</param>
     /// <param name="armor">Each part's armour, integrity and damage multiplier, in Part order.</param>
-    /// <param name="look">Where its propellers and engine fires are drawn.</param>
+    /// <param name="look">Its sprite sheet, and where its propellers and engine fires are drawn.</param>
     protected Aircraft(Airframe airframe, DamageTuning.HitBox[] hitBoxes, float[] armor, float[] integrity, float[] damageMultiplier,
-        AircraftLook look, Pilot pilot, SpriteSphere sphere)
+        AircraftLook look, Pilot pilot)
     {
+        _sheet = look.Sheet;
         Propellers = new Propeller[look.Propellers.Length];
         for (var i = 0; i < Propellers.Length; i++) Propellers[i] = new Propeller(look.Propellers[i]);
         FirePoints = look.FirePoints;
         Flight = new FlightModel(airframe);
         FuelGal = airframe.FuelCapacityGal;
         Pilot = pilot;
-        Sphere = sphere;
         Parts = new AircraftPart[DamageModel.PartCount];
         for (var i = 0; i < Parts.Length; i++)
         {
@@ -257,10 +262,12 @@ public sealed class Airframe
     public float RollResponse;                      // how quickly it rolls to the bank asked for: fraction of the gap per tick
 }
 
-/// <summary>How an aircraft type looks beyond its sprite sphere: its propellers and where its engine fires show. Positions
-/// are in the sprite sphere's frame, feet from the middle of a frame (x toward the nose, y toward the left wing, z up).</summary>
+/// <summary>How an aircraft type looks: the sprite sheet it is drawn from, its propellers and where its engine fires
+/// show. Positions are in the sprite sphere's frame, feet from the middle of a frame (x toward the nose, y toward the
+/// left wing, z up).</summary>
 public sealed class AircraftLook
 {
+    public SpriteSheetSpec Sheet;
     public PropellerSpec[] Propellers;
     public Vector3[] FirePoints;
 }

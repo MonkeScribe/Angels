@@ -75,8 +75,6 @@ public class Game1 : Game
     private SpriteBatch _sb;
     private Texture2D _pixel, _grass, _tree;
     private Texture2D[] _houses, _clouds;
-    private SpriteSphere _sphere;      // views of the (early-war) Spitfire from every angle: every aircraft is drawn from it
-    private SpriteSphere _playerSphere; // the player's, the same sphere (the late-war one is still there: SpriteSphere.LoadLateWar)
     private readonly Fx _fx = new();
     private EffectArt _effects;                 // fire animation and smoke sprites
     private float _time;                        // seconds of play, for animations
@@ -137,7 +135,7 @@ public class Game1 : Game
 
     public Game1()
     {
-        _worldModel.SpawnPlayer(_pilot, Vector2.Zero, false, null);
+        _worldModel.SpawnPlayer(_pilot, Vector2.Zero, false);
         _guns = new Guns(_rng);
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
@@ -162,13 +160,11 @@ public class Game1 : Game
         _sb = new SpriteBatch(GraphicsDevice);
         _pixel = Art.Pixel(GraphicsDevice);
         _instruments = new Instruments(GraphicsDevice, _pixel);
-        _sphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
-        _playerSphere = _sphere;
-        Player.Sphere = _playerSphere;
-        _traffic = new Traffic(_sphere);
+        SpriteSphere.Device = GraphicsDevice;   // each aircraft type loads its own sprite sheet when first drawn
+        _traffic = new Traffic();
         _effects = new EffectArt(GraphicsDevice);
         _art = new AircraftArt(_pixel, _effects);
-        _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere, _effects);
+        _gunsight = new Gunsight(GraphicsDevice, _sb, _effects);
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
         _w2 = new RenderTarget2D(GraphicsDevice, vp0.Width / 2, vp0.Height / 2);
@@ -206,7 +202,7 @@ public class Game1 : Game
 
     private void Reset()
     {
-        _worldModel.SpawnPlayer(_pilot, _pos, _arcade, _playerSphere);   // a fresh aircraft where the old one was
+        _worldModel.SpawnPlayer(_pilot, _pos, _arcade);   // a fresh aircraft where the old one was
         _phase = Phase.Flying;
         _particles.Clear();
         _pan = Vector2.Zero;
@@ -351,7 +347,7 @@ public class Game1 : Game
         // barrel tip on screen: the muzzle in the sphere's frame (x nose, y left, z up; its centre is a little ahead of
         // the plane's origin and above the nose's axis), put where the picture shows it.
         var kws = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f)))
-                  * SpriteSphere.MapScale / GroundZoom;                                 // world px per px of the sphere's picture
+                  * Player.Sphere.MapScale / GroundZoom;                                 // world px per px of the sphere's picture
         var view = AircraftArt.MapView(Player);
         var mapMuzzles = new Vector2[Guns.GunCount];
         for (var g = 0; g < Guns.GunCount; g++)
@@ -863,7 +859,7 @@ public class Game1 : Game
         if (_phase != Phase.Wrecked)
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var sc = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * SpriteSphere.MapScale;
+            var sc = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * Player.Sphere.MapScale;
             var shadowAt = centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s;
             // Drawn like every other aircraft (AircraftArt): the picture for how it is turned, propeller, fire.
             var view = AircraftArt.MapView(Player);
@@ -1166,7 +1162,7 @@ public class Game1 : Game
                 var sp = centre + (c.Pos + new Vector2(4f, 6f) * (c.Altitude / 1000f) - _pos) * zGround;
                 var ss = worldScale * zGround;
                 if (ss * 96f < 3f) continue;
-                _art.DrawShadow(_sb, c, view, sp, ss * 0.9f * SpriteSphere.MapScale, new Color(0, 0, 0, 70));
+                _art.DrawShadow(_sb, c, view, sp, ss * 0.9f * c.Sphere.MapScale, new Color(0, 0, 0, 70));
                 continue;
             }
             var above = c.Altitude > _fm.Altitude;
@@ -1176,7 +1172,7 @@ public class Game1 : Game
             if (scale * 96f < 3f) continue;
             var screen = centre + (c.Pos - _pos) * z;
             var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
-            _art.Draw(_sb, c, view, screen, scale * SpriteSphere.MapScale, alpha, _time);
+            _art.Draw(_sb, c, view, screen, scale * c.Sphere.MapScale, alpha, _time);
         }
         if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
     }

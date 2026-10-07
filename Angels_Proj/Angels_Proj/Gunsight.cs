@@ -34,7 +34,6 @@ public sealed class Gunsight
     private readonly SpriteBatch _sb;
     private readonly BasicEffect _fx, _fxTex;
     private readonly Texture2D[] _cloudTex;
-    private readonly SpriteSphere _sphere;
     private readonly EffectArt _effects;
     private float _time;
     // Camera-facing sprites (planes and clouds), as six vertices each, drawn far to near.
@@ -61,11 +60,10 @@ public sealed class Gunsight
         return MathF.Abs(Vector3.Dot(rel, right) / d) < tanH && MathF.Abs(Vector3.Dot(rel, up) / d) < tanH / aspect;
     }
 
-    public Gunsight(GraphicsDevice gd, SpriteBatch sb, SpriteSphere sphere, EffectArt effects)
+    public Gunsight(GraphicsDevice gd, SpriteBatch sb, EffectArt effects)
     {
         _gd = gd;
         _sb = sb;
-        _sphere = sphere;
         _effects = effects;
         _fx = new BasicEffect(gd) { VertexColorEnabled = true, LightingEnabled = false, FogEnabled = false };
         _fxTex = new BasicEffect(gd) { VertexColorEnabled = true, TextureEnabled = true, LightingEnabled = false, FogEnabled = false };
@@ -376,7 +374,7 @@ public sealed class Gunsight
             float sheetW = sphere.Sheet.Width, sheetH = sphere.Sheet.Height;
             var view = sphere.Pick(-pos / MathF.Sqrt(dist2), upV, pf, pr, pu);
             var a = 1f - hazeK;
-            var half = SpriteSphere.FrameFt / 2f;
+            var half = sphere.FrameFt / 2f;
             // Half a texel in from the frame's edge, so neighbouring frames don't bleed in.
             var uv = new Vector4((view.Src.X + 0.5f) / sheetW, (view.Src.Y + 0.5f) / sheetH,
                 (view.Src.Right - 0.5f) / sheetW, (view.Src.Bottom - 0.5f) / sheetH);

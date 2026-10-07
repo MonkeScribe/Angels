@@ -27,9 +27,8 @@ public sealed class Traffic
 
     private readonly List<Formation> _formations = new();
     private readonly Random _rng;
-    private readonly SpriteSphere _sphere;
 
-    public Traffic(SpriteSphere sphere, int seed = 5) { _sphere = sphere; _rng = new Random(seed); }
+    public Traffic(int seed = 5) { _rng = new Random(seed); }
 
     private float Rand(float lo, float hi) => lo + (float)_rng.NextDouble() * (hi - lo);
 
@@ -95,7 +94,7 @@ public sealed class Traffic
                 Leader = i == 0 ? null : f.Planes[0], Slot = Slots[i], SlotAltFt = slotAlt,
                 CourseHeading = heading, TurnRate = turnRate, CruiseAltFt = alt + slotAlt, CruiseThrottle = throttle,
             };
-            var a = new Spitfire(pilot, _sphere)
+            var a = new Spitfire(pilot)
             {
                 Pos = pos + right * Slots[i].X - dir * Slots[i].Y,
                 Salt = _rng.Next(64),

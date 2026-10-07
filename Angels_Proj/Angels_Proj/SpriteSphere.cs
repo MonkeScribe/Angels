@@ -6,8 +6,8 @@ using Microsoft.Xna.Framework.Graphics;
 namespace Angels_Proj;
 
 /// <summary>
-/// The Spitfire as a sphere of pre-rendered views (Content/Sprites/spitfire3d/spitfire_sheet.png): a 13 x 13 sheet of
-/// 256 px frames, the camera going round the plane every 15 degrees of azimuth (columns) and up from -90 to +90 degrees
+/// An aircraft type as a sphere of pre-rendered views (a sprite sheet, named by the type's SpriteSheetSpec): a 13 x 13
+/// sheet of 256 px frames, the camera going round the plane every 15 degrees of azimuth (columns) and up from -90 to +90 degrees
 /// of elevation (rows, +90 first). Each frame is an orthographic picture with the aircraft's centre in the middle of the
 /// frame, and the frames only go half way round: the plane is the same either side, so the other half is the same
 /// frame flipped.
@@ -20,37 +20,43 @@ namespace Angels_Proj;
 public sealed class SpriteSphere
 {
     public const int Frame = 256, Step = 15, Cols = 13, Rows = 13;
-    public const string LateWar = "Content/Sprites/spitfire3d/spitfire_sheet.png";
-    public const string EarlyWar = "Content/Sprites/spitfire_oldwar/spitfire_sheet.png";
 
-    /// <summary>How big the plane is in a frame: its wingspan covers this many pixels (the top view, measured), for a span of
-    /// SpanFt feet. So a frame covers FrameFt feet across.</summary>
-    public const float SpanPx = 234f, SpanFt = 37.2f;
-    public const float FrameFt = Frame * SpanFt / SpanPx;
-    public const float PxPerFt = SpanPx / SpanFt;
+    /// <summary>On the map a plane is drawn this many px per foot of its real size at scale 1 (a Spitfire's 37 ft span is
+    /// 92 px), so bigger aircraft are drawn bigger.</summary>
+    public const float MapPxPerFt = 92f / 37.2f;
 
-    /// <summary>Scale that draws a frame on the map at the size the old 96 px plane had (92 px wingspan at scale 1).</summary>
-    public const float MapScale = 92f / SpanPx;
+    /// <summary>The device sheets are loaded on; set once by the game before anything is drawn.</summary>
+    public static GraphicsDevice Device;
 
-    /// <summary>Where azimuth 0 is: the angle of the camera round the plane in the frames, in degrees, taken from the nose and
-    /// counted anticlockwise seen from above. In the current sheet azimuth 0 is nose-on, 90 the plane's left side and 180
-    /// tail-on, so the frames cover its whole length and the missing right side is the left flipped. (The first render
-    /// began at the right side, -90, and had no tail views.)</summary>
-    private const float AzZeroDeg = 0f;
+    private static readonly Dictionary<string, SpriteSphere> Loaded = new();
 
+    /// <summary>The sphere for a sheet, loaded the first time it is asked for and shared after that (a sheet is big, and
+    /// every aircraft of a type uses the same one).</summary>
+    public static SpriteSphere For(SpriteSheetSpec spec)
+    {
+        if (!Loaded.TryGetValue(spec.Path, out var sphere))
+        {
+            sphere = new SpriteSphere(Device, spec);
+            Loaded[spec.Path] = sphere;
+        }
+        return sphere;
+    }
+
+    public readonly SpriteSheetSpec Spec;
     public readonly Texture2D Sheet;
 
-    /// <summary>What to add to a gun muzzle (given as x right, y up, z forward from the plane's origin, as in Guns.Muzzles, then
-    /// turned into the frame's axes) to find it in the frames: the frame's middle is not the plane's origin.</summary>
-    public readonly Vector3 MuzzleShift;
+    /// <summary>Sheet px per foot of the aircraft, from how many pixels its wingspan covers.</summary>
+    public float PxPerFt => Spec.SpanPx / Spec.SpanFt;
 
-    /// <summary>The late-war Spitfire (the other aircraft): four-bladed.</summary>
-    public static SpriteSphere LoadLateWar(GraphicsDevice gd) =>
-        new(gd, LateWar, new Vector3(0.7f, 0f, -1.25f));   // (its propeller: 4 blades, hub at 14.6, 0, -1.25)
+    /// <summary>Feet a whole frame covers.</summary>
+    public float FrameFt => Frame / PxPerFt;
 
-    /// <summary>The early-war Spitfire (the player): three-bladed, shorter in the nose.</summary>
-    public static SpriteSphere LoadEarlyWar(GraphicsDevice gd) =>
-        new(gd, EarlyWar, new Vector3(-1.3f, 0f, -0.55f));
+    /// <summary>Scale that draws a frame on the map at MapPxPerFt (times the map's own scale).</summary>
+    public float MapScale => MapPxPerFt / PxPerFt;
+
+    /// <summary>What to add to a gun muzzle (x right, y up, z forward from the plane's origin, as in Guns.Muzzles, turned
+    /// into the frame's axes) to find it in the frames: the frame's middle is not the plane's origin.</summary>
+    public Vector3 MuzzleShift => Spec.MuzzleShift;
 
     /// <summary>One of the views, in the plane's own frame (x nose, y left, z up): which way the camera is, which way is up
     /// and right in its picture.</summary>
@@ -70,10 +76,11 @@ public sealed class SpriteSphere
         public readonly Rectangle Src;       // the frame on the sheet
         public readonly bool Flip;           // draw it flipped left to right
         public readonly float Roll;          // turn it this far, clockwise on screen, radians
+        public readonly float PxPerFt;       // the sheet's px per foot
         private readonly Vector3 _right, _up; // the picture's right and up, in the plane's own frame
-        public View(Rectangle src, bool flip, float roll, Vector3 right, Vector3 up)
+        public View(Rectangle src, bool flip, float roll, Vector3 right, Vector3 up, float pxPerFt)
         {
-            Src = src; Flip = flip; Roll = roll; _right = right; _up = up;
+            Src = src; Flip = flip; Roll = roll; _right = right; _up = up; PxPerFt = pxPerFt;
         }
 
         /// <summary>Where a point of the plane lands on screen, as sprite px (x right, y down) from the plane's centre, for a
@@ -89,14 +96,14 @@ public sealed class SpriteSphere
 
     private readonly List<Cand> _views = new();
 
-    private SpriteSphere(GraphicsDevice gd, string path, Vector3 muzzleShift)
+    private SpriteSphere(GraphicsDevice gd, SpriteSheetSpec spec)
     {
-        MuzzleShift = muzzleShift;
-        Sheet = LoadSheet(gd, path);
+        Spec = spec;
+        Sheet = LoadSheet(gd, spec.Path);
         for (var col = 0; col < Cols; col++)
             for (var row = 0; row < Rows; row++)
             {
-                var az = MathHelper.ToRadians(col * Step + AzZeroDeg);
+                var az = MathHelper.ToRadians(col * Step + spec.AzZeroDeg);
                 var el = MathHelper.ToRadians(90 - row * Step);
                 float ce = MathF.Cos(el), se = MathF.Sin(el), ca = MathF.Cos(az), sa = MathF.Sin(az);
                 var c = new Vector3(ce * ca, ce * sa, se);
@@ -146,6 +153,25 @@ public sealed class SpriteSphere
             if (score >= bestScore) continue;
             best = v; bestRoll = roll; bestScore = score;
         }
-        return new View(best.Src, best.Flip, bestRoll, best.R, best.U);
+        return new View(best.Src, best.Flip, bestRoll, best.R, best.U, PxPerFt);
     }
+}
+
+/// <summary>
+/// Which sprite sheet an aircraft type is drawn from, and how to read it. The sheet is 13 x 13 frames of 256 px rendered
+/// by tools/render_sprites.py.
+/// </summary>
+public sealed class SpriteSheetSpec
+{
+    public string Path;
+
+    /// <summary>The wingspan covers SpanPx pixels of a frame (measured on the top view) for a real span of SpanFt feet.</summary>
+    public float SpanPx, SpanFt;
+
+    /// <summary>Where azimuth 0 is in the frames: the camera's angle round the plane from the nose, counted anticlockwise
+    /// seen from above, in degrees. 0 when the sheet was rendered nose-on first (NOSE_YAW_OFFSET 90 in the script).</summary>
+    public float AzZeroDeg;
+
+    /// <summary>See SpriteSphere.MuzzleShift.</summary>
+    public Vector3 MuzzleShift;
 }

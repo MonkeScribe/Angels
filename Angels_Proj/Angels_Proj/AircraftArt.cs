@@ -63,7 +63,7 @@ public sealed class AircraftArt
     {
         var spec = prop.Spec;
         var hub = pos + view.Project(spec.Hub) * scale;
-        var spinnerPx = spec.SpinnerFt * SpriteSphere.PxPerFt;
+        var spinnerPx = spec.SpinnerFt * view.PxPerFt;
         var width = MathF.Max(1f, BladeWidthPx * scale);
         // A point on the disc at angle a (0 = toward the right wing, 90 degrees = straight up), as sphere px from the hub.
         Vector2 Disc(float a, float ft) => view.Project(new Vector3(0f, -MathF.Cos(a), MathF.Sin(a)) * ft);
@@ -116,12 +116,12 @@ public sealed class AircraftArt
         if (strength <= 0f) return;
         var at = pos + view.Project(point) * scale;
         var back = view.Project(new Vector3(-1f, 0f, 0f));               // sphere px per foot toward the tail, on screen
-        var len = back.Length() / SpriteSphere.PxPerFt;                   // 1 side-on, 0 end-on
+        var len = back.Length() / view.PxPerFt;                           // 1 side-on, 0 end-on
         var rot = len > 0.05f ? MathF.Atan2(back.X, -back.Y) : 0f;
         var frame = _effects.FireFrame(time, salt);
         var lengthFt = (5f + 13f * strength) * MathF.Max(0.35f, len);
         var widthFt = 3f + 5f * strength;
-        var ftPx = scale * SpriteSphere.PxPerFt;                          // screen px per foot
+        var ftPx = scale * view.PxPerFt;                                  // screen px per foot
         var sc = new Vector2(widthFt * ftPx / (frame.Width * EffectArt.FireWidthFrac), lengthFt * ftPx / (frame.Height * EffectArt.FireLengthFrac));
         // A little of the colour is added rather than laid over, so the flames glow against what's behind them.
         sb.Draw(frame, at, null, new Color(255, 255, 255, 215), rot, EffectArt.FireOrigin(frame), sc, SpriteEffects.None, 0f);

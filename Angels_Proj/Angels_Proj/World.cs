@@ -18,10 +18,10 @@ public sealed class World
     public Aircraft Player { get; private set; }
 
     /// <summary>A fresh aircraft for the player at pos (world px), replacing any old one. arcade doubles the altitude rates.</summary>
-    public Aircraft SpawnPlayer(Pilot pilot, Vector2 pos, bool arcade, SpriteSphere sphere)
+    public Aircraft SpawnPlayer(Pilot pilot, Vector2 pos, bool arcade)
     {
         if (Player != null) Planes.Remove(Player);
-        Player = new Spitfire(pilot, sphere) { Pos = pos, IsPlayer = true };
+        Player = new Spitfire(pilot) { Pos = pos, IsPlayer = true };
         Player.Flight.VerticalRateScale = arcade ? 2f : 1f;
         Planes.Add(Player);
         Refresh();
