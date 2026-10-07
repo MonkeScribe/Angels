@@ -452,9 +452,6 @@ public sealed class Gunsight
                 (view.Src.Right - 0.5f) / sheetW, (view.Src.Bottom - 0.5f) / sheetH);
             AddBillboard(sphere.Sheet, MathF.Sqrt(dist2), pos, rightV, upV, half, half, view.Roll, view.Flip, uv, new Color(a, a, a, a));
 
-            // Engine fire: the animation laid flat to the view with its base on the engine, turned so the flames stream
-            // back along the plane as we see it (shorter when it points toward or away from us), bigger the fiercer it is.
-            // Sorted by the engine's own distance, so it shows in front of the plane or behind it as it should.
             // Fires, one on each burning part: the animation laid flat to the view with its base on the part, turned so the
             // flames stream back along the plane as we see it (shorter when it points toward or away from us), bigger the
             // fiercer it is. Sorted by the fire's own distance, so it shows in front of the plane or behind it as it should.
