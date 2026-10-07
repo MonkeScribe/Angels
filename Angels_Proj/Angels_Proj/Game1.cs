@@ -40,6 +40,7 @@ public class Game1 : Game
     private const float PanFollow = 0.12f;       // how fast the camera swings to keep an aimed-at target on screen (fraction of the gap a tick)
     private const float PanReturn = 0.88f;       // pan left each tick once the button is released: it eases back to centre
     private const float ExitPointerPx = 180f;    // where the pointer is put when the aimer drops: this far from the centre along the heading (720p px)
+    private const float LockGraceBox = 1.3f;     // a lock is kept while the target is inside a box this much bigger than the sight's view
     private const float DotRadiusSpans = 0.5f;   // the sight's dot is "on" a plane within half its wingspan of its centre
     private const int ExitKeepTicks = 60;        // once the sight starts to fade the plane keeps its trajectory this long, pointer hidden
     private const int ExitLandTicks = 8;         // then the pointer pops up on the trajectory and steering waits this long for it to land
@@ -761,10 +762,11 @@ public class Game1 : Game
         _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
         if (_hovered != null && _showHitboxes) SpriteZones(_hovered, PlaneScreen(), _hoverZones); // drawn in the HITBOXES debug view only
-        // The aimer holds its target while the sight can see it; a target is first picked with the mouse (on a plane the
+        // The aimer holds its target while it is inside an invisible box a little bigger than the sight's view (a grace
+        // margin, so slipping just past the edge doesn't lose it); a target is first picked with the mouse (on a plane the
         // sight can see). While the sight is showing, putting its centre dot on another plane switches to that one.
         if (_tracked == null || _phase != Phase.Flying || !_worldModel.Others.Contains(_tracked) ||
-            !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
+            !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt, LockGraceBox))
             _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
         if (_phase == Phase.Flying && (_tracked != null || _sightAlpha > 0.01f) && PlaneOnDot(camFt, sf) is { } onDot)
             _tracked = onDot;

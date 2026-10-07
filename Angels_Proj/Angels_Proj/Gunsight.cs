@@ -77,12 +77,13 @@ public sealed class Gunsight
     /// debug hit box view; filled by the game each tick.</summary>
     public readonly List<(Vector3 A, Vector3 B, Color Color)> DebugLines = new();
 
-    /// <summary>Would something at this offset from the camera be inside the sight's field of view and range?</summary>
-    public static bool Sees(Vector3 rel, Vector3 right, Vector3 up, Vector3 forward, float aspect, float range)
+    /// <summary>Would something at this offset from the camera be inside the sight's field of view and range? grow widens
+    /// the view's box (1.2 = a box 20% wider and taller than the sight's picture).</summary>
+    public static bool Sees(Vector3 rel, Vector3 right, Vector3 up, Vector3 forward, float aspect, float range, float grow = 1f)
     {
         var d = Vector3.Dot(rel, forward);
         if (d < 20f || rel.LengthSquared() > range * range) return false;
-        var tanH = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
+        var tanH = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f) * grow;
         return MathF.Abs(Vector3.Dot(rel, right) / d) < tanH && MathF.Abs(Vector3.Dot(rel, up) / d) < tanH / aspect;
     }
 
