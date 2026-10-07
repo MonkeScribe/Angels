@@ -23,6 +23,7 @@ public sealed class DebugMenu
 
     private readonly List<Item> _items = new();
     private int _sel = -1;
+    private int _valueChars = 3;        // widest value seen so far, in characters, so the panel doesn't twitch as values change
     public bool Open;
 
     private static readonly Color Panel = new(18, 20, 24, 232), Edge = new(70, 76, 88);
@@ -44,7 +45,16 @@ public sealed class DebugMenu
     private Rectangle PanelRect(Rectangle screen, float scale)
     {
         var px = Px(scale);
-        int w = 70 * px, h = 18 * px + _items.Count * RowH(scale) + 14 * px;
+        // Wide enough for the longest label and the widest value side by side, with a clear gap between them.
+        var labelChars = 19;    // the footer
+        foreach (var it in _items)
+        {
+            if (it.Header) continue;
+            labelChars = Math.Max(labelChars, it.Label.Length);
+            _valueChars = Math.Max(_valueChars, it.Value?.Invoke()?.Length ?? 0);
+        }
+        int w = (6 + 4 + 6) * px + (labelChars + 4 + _valueChars) * 6 * px;
+        int h = 18 * px + _items.Count * RowH(scale) + 14 * px;
         return new Rectangle((int)(16 * scale), (int)(16 * scale), w, h);
     }
 
