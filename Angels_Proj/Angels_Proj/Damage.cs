@@ -87,12 +87,13 @@ public static class DamageTuning
     /// <summary>Black smoke from the engine starts below this many hit points and thickens to its heaviest at zero.</summary>
     public static float SmokeStartsBelowHp = 75f;
 
-    /// <summary>A fire on any other part (it can only catch from a neighbouring part that is gone and burning, or from the
-    /// engine blowing up) eats that part at between these rates, weakest to strongest fire; it doesn't go out. Its strength
+    /// <summary>A fire on any other part (it can only catch from a neighbouring part, other than the engine, that is gone
+    /// and burning) eats that part at between these rates, weakest to strongest fire; it doesn't go out. Its strength
     /// follows the part: FireMinStrength on a whole part, 100% on one at 0 hp.</summary>
     public static float PartFireBurnMinHpPerSec = 2f, PartFireBurnMaxHpPerSec = 6f, FireMinStrength = 0.2f;
 
-    /// <summary>A part that is gone and burning sets each neighbour alight at this chance per second (see DamageModel.Neighbours).</summary>
+    /// <summary>A part that is gone and burning sets each neighbour alight at this chance per second (see DamageModel.Neighbours).
+    /// The engine's fire never spreads, even when it blows up.</summary>
     public static float FireSpreadChancePerSec = 0.35f;
 
     // ---------------------------------------------------------------- controls

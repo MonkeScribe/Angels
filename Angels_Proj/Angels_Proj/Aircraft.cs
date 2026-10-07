@@ -223,8 +223,8 @@ public abstract class Aircraft
         Engine.Hp = MathF.Max(0f, Engine.Hp - rate * dt);
     }
 
-    /// <summary>Fires on parts other than the engine eat their part and never go out; a part that is gone and burning
-    /// sets its neighbours alight, a chance each second.</summary>
+    /// <summary>Fires on parts other than the engine eat their part and never go out; a part (other than the engine, whose
+    /// fire never spreads) that is gone and burning sets its neighbours alight, a chance each second.</summary>
     private void UpdateFires(float dt, Random rng)
     {
         foreach (var p in Parts)
@@ -235,14 +235,14 @@ public abstract class Aircraft
         }
         foreach (var p in Parts)
         {
-            if (!p.Gone || !p.OnFire) continue;
+            if (!p.Gone || !p.OnFire || p == Engine) continue;
             foreach (var n in DamageModel.Neighbours(p.Kind))
                 if (!this[n].OnFire && rng.NextDouble() < DamageTuning.FireSpreadChancePerSec * dt) this[n].OnFire = true;
         }
     }
 
     /// <summary>Deals with each part the moment it is gone (once):
-    ///   engine   - blows up: an explosion, and the fire takes every part touching it;
+    ///   engine   - blows up: an explosion, and it burns on, but its fire stays in the engine;
     ///   fuselage - the airframe breaks: an explosion, it burns, and the aircraft noses over into a steep spiralling dive;
     ///   a wing   - the other wing's lift rolls it over: a spin toward the missing wing all the way down;
     ///   canopy   - the pilot is dead: nobody flies it, it holds its heading and the nose slowly sinks;
@@ -258,8 +258,7 @@ public abstract class Aircraft
             {
                 case Part.Engine:
                     fx.Explosion(EngineFt(), 30f, IsPlayer);
-                    p.OnFire = true;
-                    foreach (var n in DamageModel.Neighbours(Part.Engine)) this[n].OnFire = true;
+                    p.OnFire = true;      // it burns on in the nose, but doesn't spread
                     break;
                 case Part.Fuselage:
                     fx.Explosion(FireFt(p), 40f, IsPlayer);
