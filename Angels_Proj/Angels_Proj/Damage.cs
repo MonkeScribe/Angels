@@ -68,9 +68,30 @@ public static class DamageTuning
     /// MinScale (at zero hit points), so a weak weapon keeps chipping away but ever more slowly.</summary>
     public static float BelowFloorScale = 0.35f, MinScale = 0.05f;
 
-    /// <summary>The state bands: at MaxHp undamaged, above SlightAbove slight, above ModerateAbove moderate, above
-    /// CriticalAbove critical, above zero black, at zero gone.</summary>
+    /// <summary>The state bands, by colour: at MaxHp green (undamaged), above SlightAbove yellow (slight), above
+    /// ModerateAbove orange (moderate), above CriticalAbove red (critical), above zero black, at zero gone.</summary>
     public static float SlightAbove = 75f, ModerateAbove = 50f, CriticalAbove = 25f;
+
+    // ---------------------------------------------------------------- engine, fuel and fire
+
+    /// <summary>Engine power (thrust) is the engine's hit points as a fraction: 50 hp, half the thrust. No fuel, none.</summary>
+    public static float FuelCapacityGal = 85f;                 // Spitfire Mk I: 48 + 37 imperial gallons
+    public static float FuelBurnIdleGalPerMin = 0.3f, FuelBurnFullGalPerMin = 1.5f;   // at idle and full throttle
+
+    /// <summary>Each time the engine enters yellow and then orange it rolls this chance of springing a fuel leak.</summary>
+    public static float LeakChance = 0.33f;
+    public static float LeakGalPerMin = 3f;                    // per leak
+
+    /// <summary>Entering red starts a fire for certain (and no more leak rolls). Its strength follows the engine: just into
+    /// red is about 1%, 0 hp is 100%. While it burns it eats the engine at between these rates (hp per second, weakest to
+    /// strongest fire), so a fire left alone grows. It only burns with the throttle up: hold the throttle below
+    /// FireThrottleOff for FireOutSec and it goes out (a fresh hit on the engine lights it again). It also dies when the
+    /// fuel runs out.</summary>
+    public static float FireBurnMinHpPerSec = 0.25f, FireBurnMaxHpPerSec = 1.0f;
+    public static float FireThrottleOff = 0.05f, FireOutSec = 3f;
+
+    /// <summary>Black smoke from the engine starts below this many hit points and thickens to its heaviest at zero.</summary>
+    public static float SmokeStartsBelowHp = 75f;
 
     // ---------------------------------------------------------------- hit boxes
 
@@ -160,24 +181,15 @@ public static class DamageModel
         return loss;
     }
 
-    /// <summary>Placeholder until each state has its own effects: the aircraft goes down when the engine, the fuselage,
-    /// the canopy (the pilot), the tail or either wing is gone.</summary>
-    public static bool Downed(float[] parts)
-    {
-        foreach (var hp in parts)
-            if (hp <= 0f) return true;
-        return false;
-    }
-
-    /// <summary>Colour for a state, for the debug views: green, yellow-green, yellow, orange, red, dark grey.</summary>
+    /// <summary>Colour for a state: green, yellow, orange, red, black, and pale grey for gone.</summary>
     public static Color StateColor(PartState s) => s switch
     {
         PartState.Undamaged => new Color(90, 230, 110),
-        PartState.Slight => new Color(190, 235, 80),
-        PartState.Moderate => new Color(250, 220, 60),
-        PartState.Critical => new Color(255, 140, 40),
-        PartState.Black => new Color(235, 45, 40),
-        _ => new Color(70, 70, 70),
+        PartState.Slight => new Color(250, 225, 60),
+        PartState.Moderate => new Color(255, 140, 40),
+        PartState.Critical => new Color(235, 45, 40),
+        PartState.Black => new Color(16, 16, 16),
+        _ => new Color(150, 150, 150),
     };
 
     public static string Name(Part p) => p switch
@@ -199,4 +211,84 @@ public static class DamageModel
         PartState.Black => "BLACK",
         _ => "GONE",
     };
+}
+
+/// <summary>
+/// One aircraft's damage: the hit points of each part, plus what the engine's damage brings with it, fuel leaks and
+/// fire, and the fuel itself. Used by the player and by the other aircraft (which ignore what it does to the engine,
+/// for now, but show its smoke and fire).
+/// </summary>
+public sealed class AircraftDamage
+{
+    public readonly float[] Parts = DamageModel.NewParts();
+    public float FuelGal = DamageTuning.FuelCapacityGal;
+    public int Leaks;
+    public bool OnFire;
+    private PartState _engineSeen = PartState.Undamaged;   // the engine band last dealt with, so each band rolls once
+    private float _throttleOffSec;
+
+    public float EngineHp => Parts[(int)Part.Engine];
+    public PartState EngineState => DamageModel.StateOf(EngineHp);
+
+    /// <summary>Thrust available, 0-1: the engine's hit points as a fraction, and nothing without fuel.</summary>
+    public float EnginePower => FuelGal > 0f ? EngineHp / DamageTuning.MaxHp : 0f;
+
+    /// <summary>How fierce the fire is, 0-1: about 1% just into red, 100% with the engine at 0 hp.</summary>
+    public float FireStrength => OnFire
+        ? MathHelper.Clamp((DamageTuning.ModerateAbove - EngineHp) / DamageTuning.ModerateAbove, 0.01f, 1f) : 0f;
+
+    /// <summary>How thick the engine's black smoke is, 0-1.</summary>
+    public float SmokeStrength => MathHelper.Clamp((DamageTuning.SmokeStartsBelowHp - EngineHp) / DamageTuning.SmokeStartsBelowHp, 0f, 1f);
+
+    /// <summary>A round hits a part (see DamageModel.Hit). Returns the hit points lost.</summary>
+    public float Hit(Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng)
+    {
+        var loss = DamageModel.Hit(Parts, part, weapon, impactSpeedFtS, rng);
+        if (part == Part.Engine && loss > 0f) EngineDamaged(rng);
+        return loss;
+    }
+
+    /// <summary>Takes hit points straight off a part (debug, or damage that isn't a round).</summary>
+    public void Damage(Part part, float hp, Random rng)
+    {
+        Parts[(int)part] = MathF.Max(0f, Parts[(int)part] - hp);
+        if (part == Part.Engine) EngineDamaged(rng);
+    }
+
+    /// <summary>The engine has just lost hit points: each band it has newly entered has its say (a leak roll on entering
+    /// yellow and on entering orange; a fire on reaching red), and a hit on an engine already in red lights it again.</summary>
+    private void EngineDamaged(Random rng)
+    {
+        var now = EngineState;
+        while (_engineSeen < now)
+        {
+            _engineSeen++;
+            if (_engineSeen is PartState.Slight or PartState.Moderate)
+            {
+                if (rng.NextDouble() < DamageTuning.LeakChance) Leaks++;
+            }
+        }
+        if (now >= PartState.Critical && FuelGal > 0f)
+        {
+            OnFire = true;
+            _throttleOffSec = 0f;
+        }
+    }
+
+    /// <summary>One step of dt seconds. throttle is 0-1; burnsFuel is false for aircraft whose fuel isn't modelled (the
+    /// fire still follows their throttle, which is taken as up).</summary>
+    public void Update(float dt, float throttle, bool burnsFuel)
+    {
+        if (burnsFuel && FuelGal > 0f)
+        {
+            var burn = EnginePower > 0f ? MathHelper.Lerp(DamageTuning.FuelBurnIdleGalPerMin, DamageTuning.FuelBurnFullGalPerMin, throttle) : 0f;
+            FuelGal = MathF.Max(0f, FuelGal - (burn + Leaks * DamageTuning.LeakGalPerMin) * dt / 60f);
+        }
+        if (!OnFire) return;
+        if (FuelGal <= 0f) { OnFire = false; return; }
+        _throttleOffSec = throttle < DamageTuning.FireThrottleOff ? _throttleOffSec + dt : 0f;
+        if (_throttleOffSec >= DamageTuning.FireOutSec) { OnFire = false; return; }
+        var rate = MathHelper.Lerp(DamageTuning.FireBurnMinHpPerSec, DamageTuning.FireBurnMaxHpPerSec, FireStrength);
+        Parts[(int)Part.Engine] = MathF.Max(0f, EngineHp - rate * dt);
+    }
 }

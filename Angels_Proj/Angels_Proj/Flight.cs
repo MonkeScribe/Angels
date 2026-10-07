@@ -67,6 +67,8 @@ public sealed class FlightModel
     private bool _pointSwing;                      // the swing is the pointing assist's, so it uses the gentler rates
     private bool _wheelSteered;                    // the command came from the wheel: the nose goes straight to it and locks there
     public float Throttle = 0.55f;
+    /// <summary>Fraction of the engine's power available, 0-1: set each tick from the engine's damage and fuel (Damage.cs).</summary>
+    public float EnginePower = 1f;
     private bool _pitchHeld;
     public bool Aiming;                            // the aimer is up: the aim assist flies the pitch
     public float AimElevationDeg;                  // while aiming: the elevation the assist points the nose at
@@ -264,7 +266,7 @@ public sealed class FlightModel
 
         // Propeller thrust: power / speed, with efficiency falling off at low speed.
         var eta = PropEff * (1f - MathF.Exp(-v / 60f));
-        var thrust = MathF.Min(StaticThrustCapLb, eta * Throttle * PowerHp(Altitude) * 550f / v);
+        var thrust = MathF.Min(StaticThrustCapLb * EnginePower, eta * Throttle * EnginePower * PowerHp(Altitude) * 550f / v);
 
         Speed = MathF.Max(0f, Speed + G * ((thrust - drag) / WeightLb - MathF.Sin(Gamma)) * Dt);
         Altitude += Speed * MathF.Sin(Gamma) * Dt * VerticalRateScale;

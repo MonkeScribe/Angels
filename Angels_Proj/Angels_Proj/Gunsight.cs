@@ -35,6 +35,8 @@ public sealed class Gunsight
     private readonly BasicEffect _fx, _fxTex;
     private readonly Texture2D[] _cloudTex;
     private readonly SpriteSphere _sphere;
+    private readonly EffectArt _effects;
+    private float _time;
     // Camera-facing sprites (planes and clouds), as six vertices each, drawn far to near.
     private readonly List<(float dist, Texture2D tex, int start)> _bills = new();
     private readonly List<VertexPositionColorTexture> _billVerts = new();
@@ -59,11 +61,12 @@ public sealed class Gunsight
         return MathF.Abs(Vector3.Dot(rel, right) / d) < tanH && MathF.Abs(Vector3.Dot(rel, up) / d) < tanH / aspect;
     }
 
-    public Gunsight(GraphicsDevice gd, SpriteBatch sb, SpriteSphere sphere)
+    public Gunsight(GraphicsDevice gd, SpriteBatch sb, SpriteSphere sphere, EffectArt effects)
     {
         _gd = gd;
         _sb = sb;
         _sphere = sphere;
+        _effects = effects;
         _fx = new BasicEffect(gd) { VertexColorEnabled = true, LightingEnabled = false, FogEnabled = false };
         _fxTex = new BasicEffect(gd) { VertexColorEnabled = true, TextureEnabled = true, LightingEnabled = false, FogEnabled = false };
         _cloudTex = new[] { Art.Cloud(gd, 11), Art.Cloud(gd, 23), Art.Cloud(gd, 37) };
@@ -210,6 +213,7 @@ public sealed class Gunsight
 
         // Your own propeller, right in front of the nose: close, so far out of focus, and spinning fast.
         // Drawn into the view so it sits under the vignette. Throttle sets how fast it turns and how solid it looks.
+        _time += 1f / 60f;
         _propAngle += (14f + 120f * throttle) / 60f * (0.8f + 0.4f * ((_propAngle * 7f) % 1f));
         var hub = new Vector2(_final.Width / 2f, _final.Height * 1.02f);
         var rad = _final.Height * 0.82f;
@@ -370,31 +374,54 @@ public sealed class Gunsight
             var hazeK = World.Smooth(2200f, Box, MathF.Sqrt(dist2)); // fades to sky colour at the edge of the box
             World.Basis(p.Heading, p.Pitch, p.Bank, out var pr, out var pu, out var pf);
             var view = _sphere.Pick(-pos / MathF.Sqrt(dist2), upV, pf, pr, pu);
-            var burn = p.State == Traffic.State.Burning ? 0.45f : 1f;
             var a = 1f - hazeK;
             var half = SpriteSphere.FrameFt / 2f;
             // Half a texel in from the frame's edge, so neighbouring frames don't bleed in.
             var uv = new Vector4((view.Src.X + 0.5f) / sheetW, (view.Src.Y + 0.5f) / sheetH,
                 (view.Src.Right - 0.5f) / sheetW, (view.Src.Bottom - 0.5f) / sheetH);
-            AddBillboard(_sphere.Sheet, MathF.Sqrt(dist2), pos, rightV, upV, half, half, view.Roll, view.Flip, uv, new Color(burn * a, burn * a, burn * a, a));
+            AddBillboard(_sphere.Sheet, MathF.Sqrt(dist2), pos, rightV, upV, half, half, view.Roll, view.Flip, uv, new Color(a, a, a, a));
+
+            // Engine fire: the animation laid flat to the view with its base on the engine, turned so the flames stream
+            // back along the plane as we see it (shorter when it points toward or away from us), bigger the fiercer it is.
+            // Sorted by the engine's own distance, so it shows in front of the plane or behind it as it should.
+            if (p.Damage.OnFire)
+            {
+                var strength = p.Damage.FireStrength;
+                var engine = Traffic.EngineAt(p, pf, pu) - camPos;
+                float bx = Vector3.Dot(-pf, rightV), by = Vector3.Dot(-pf, upV), bl = MathF.Sqrt(bx * bx + by * by);
+                var flameDir = bl > 0.05f ? (rightV * bx + upV * by) / bl : upV;
+                var roll = bl > 0.05f ? MathF.Atan2(bx, by) : 0f;
+                var hh = (5f + 13f * strength) * MathF.Max(0.35f, bl) / (2f * EffectArt.FireLengthFrac);
+                var hw = (3f + 5f * strength) / (2f * EffectArt.FireWidthFrac);
+                var centre = engine + flameDir * hh * (2f * EffectArt.FireBaseY - 1f);
+                AddBillboard(_effects.FireFrame(_time, p.Salt), engine.Length(), centre, rightV, upV, hw, hh, roll, false,
+                    new Vector4(0f, 0f, 1f, 1f), new Color(a, a, a, 0.8f * a));   // partly added light, so it glows
+            }
         }
 
-        // Smoke, fire and sparks as camera-facing quads, drawn after the solids.
+        // Smoke trails and fuel mist as camera-facing sprites (sorted with the planes and clouds), sparks as plain quads.
+        // Our own trail is left out: it starts at our cowling, right in front of the sight, and is behind us at once.
         foreach (var p in fx.Particles)
         {
+            if (p.Own) continue;
             var c = p.Pos - camPos;
-            if (Vector3.Dot(c, fwd) < 8f) continue;
-            var t = p.T;
-            var col = p.Kind switch
+            var dist = c.Length();
+            if (Vector3.Dot(c, fwd) < 8f || dist > Box) continue;
+            var op = p.Opacity * (1f - World.Smooth(2200f, Box, dist));
+            if (op < 0.01f) continue;
+            if (p.Kind == Fx.Kind.Spark)
             {
-                Fx.Kind.Smoke => Premul(new Vector3(0.16f + 0.22f * (1f - t)), 0.7f * t),
-                Fx.Kind.Fire => Premul(Vector3.Lerp(new Vector3(1f, 0.35f, 0.1f), new Vector3(1f, 0.85f, 0.3f), t), Math.Min(1f, t * 2f)),
-                _ => Premul(new Vector3(1f, 0.92f, 0.6f), t),
-            };
-            Vector3 dx = rightV * p.Size, dy = upV * p.Size;
-            Vector3 a = c - dx - dy, b = c + dx - dy, d = c + dx + dy, e = c - dx + dy;
-            _blend.Add(Vtx(a, col)); _blend.Add(Vtx(b, col)); _blend.Add(Vtx(d, col));
-            _blend.Add(Vtx(a, col)); _blend.Add(Vtx(d, col)); _blend.Add(Vtx(e, col));
+                var col = Premul(new Vector3(1f, 0.92f, 0.6f), op);
+                Vector3 dx = rightV * p.Size, dy = upV * p.Size;
+                Vector3 q0 = c - dx - dy, q1 = c + dx - dy, q2 = c + dx + dy, q3 = c - dx + dy;
+                _blend.Add(Vtx(q0, col)); _blend.Add(Vtx(q1, col)); _blend.Add(Vtx(q2, col));
+                _blend.Add(Vtx(q0, col)); _blend.Add(Vtx(q2, col)); _blend.Add(Vtx(q3, col));
+                continue;
+            }
+            var tex = p.Kind == Fx.Kind.Smoke ? _effects.Smoke[p.Variant % _effects.Smoke.Length] : _effects.Mist;
+            var hs = p.Size / (2f * 0.85f);
+            AddBillboard(tex, dist, c, rightV, upV, hs, hs, p.Rot, false, new Vector4(0f, 0f, 1f, 1f),
+                new Color(p.Shade * op, p.Shade * op, p.Shade * op, op));
         }
         // Clouds: camera-facing billboards from the same field the map uses, only those inside the view box.
         var camPx = new Vector2(camPos.X, camPos.Z) * World.PxPerFoot;

@@ -5,10 +5,9 @@ using Microsoft.Xna.Framework;
 namespace Angels_Proj;
 
 /// <summary>
-/// Other aircraft: loose V formations flying lazy curves at assorted altitudes, with a basic damage model.
-/// A hit that gets through ignites a plane; it leaves the formation, burns, and spirals down at a steep
-/// angle until it hits the ground (see Damage.cs for how hits damage each part). Planes are not full flight models,
-/// just constant-speed flyers.
+/// Other aircraft: loose V formations flying lazy curves at assorted altitudes. Hits damage their parts (Damage.cs)
+/// and a damaged engine smokes, leaks and burns, but for now none of that changes how they fly: nothing shoots them
+/// down (only crashing kills, and these don't crash). Planes are not full flight models, just constant-speed flyers.
 /// Formations that drift out of the area where they could be seen are recycled somewhere visible.
 /// </summary>
 public sealed class Traffic
@@ -22,17 +21,15 @@ public sealed class Traffic
         new(235, 140, 50),   // orange
     };
 
-    public enum State { Flying, Burning }
-
     public sealed class Plane
     {
         public Vector2 Pos;                      // world px
         public float Altitude, Heading, Pitch, Bank;
         public float Mph, TurnRate;              // TurnRate: rad per tick
         public int Color;
-        public State State;
-        public readonly float[] Parts = DamageModel.NewParts();   // hit points of each Part (see Damage.cs)
-        public float SpinDir = 1f;
+        public readonly AircraftDamage Damage = new();
+        public float[] Parts => Damage.Parts;    // hit points of each Part (see Damage.cs)
+        public int Salt;                         // staggers its fire animation from the others'
         internal Formation Formation;
         internal int Slot;
     }
@@ -54,15 +51,14 @@ public sealed class Traffic
 
     private const int FormationCount = 6;
     private const float PxPerTickPerMph = 1.4667f * World.PxPerFoot / 60f; // mph -> ft/s -> world px/s -> per tick
-    private const float FtPerTickPerMph = 1.4667f / 60f;
 
     private readonly List<Formation> _formations = new();
-    private readonly List<Plane> _loose = new();   // burning planes that have left their formation
     private readonly List<Plane> _all = new();
     private readonly Random _rng;
     private readonly Fx _fx;
 
-    public int Ignited { get; private set; }
+    /// <summary>Rounds that have hit something.</summary>
+    public int Hits { get; private set; }
     public IReadOnlyList<Plane> All => _all;
 
     public Traffic(Fx fx, int seed = 5) { _fx = fx; _rng = new Random(seed); }
@@ -95,39 +91,22 @@ public sealed class Traffic
                 _formations[i] = NewFormation(playerPos, playerAlt, extentOfFactor, factorOfAltitude, false);
         }
 
-        for (var i = _loose.Count - 1; i >= 0; i--)
-        {
-            var p = _loose[i];
-            UpdateBurning(p);
-            if (p.Altitude <= 0f)
-            {
-                _fx.Explosion(World.ToFt(p.Pos, 0f));
-                _loose.RemoveAt(i);
-            }
-            else if (Vector2.Distance(p.Pos, playerPos) > 30000f) _loose.RemoveAt(i);
-        }
-
         _all.Clear();
         foreach (var f in _formations) _all.AddRange(f.Planes);
-        _all.AddRange(_loose);
+
+        // Damage runs on (a fire burns on, its throttle taken as up) and a damaged engine trails smoke and leaking fuel.
+        foreach (var p in _all)
+        {
+            p.Damage.Update(1f / 60f, 1f, false);
+            var d = p.Damage;
+            if (d.SmokeStrength <= 0f && !d.OnFire && d.Leaks == 0) continue;
+            World.Basis(p.Heading, p.Pitch, p.Bank, out _, out var u, out var fwd);
+            _fx.EngineTrail(EngineAt(p, fwd, u) - fwd * 4f, -fwd, d.SmokeStrength, d.FireStrength, d.Leaks, false);
+        }
     }
 
-    private void UpdateBurning(Plane p)
-    {
-        // Nose drops toward a steep dive, the plane rolls and spins as it falls, and it picks up speed.
-        p.Pitch += (-0.95f - p.Pitch) * 0.02f;
-        p.Bank += (p.SpinDir * 1.2f - p.Bank) * 0.03f;
-        p.Heading = MathHelper.WrapAngle(p.Heading + p.SpinDir * 0.012f + p.TurnRate);
-        p.Mph = MathF.Min(380f, p.Mph + 0.2f);
-        var dir = new Vector2(MathF.Sin(p.Heading), -MathF.Cos(p.Heading));
-        p.Pos += dir * p.Mph * PxPerTickPerMph * MathF.Cos(p.Pitch);
-        p.Altitude += p.Mph * FtPerTickPerMph * MathF.Sin(p.Pitch);
-
-        var at = World.ToFt(p.Pos, p.Altitude);
-        _fx.Fire(at);
-        _fx.Smoke(at);
-        _fx.Smoke(at);
-    }
+    /// <summary>Where a plane's engine is (world feet): in the nose, ahead of its origin and a little below its centre line.</summary>
+    public static Vector3 EngineAt(Plane p, Vector3 fwd, Vector3 up) => World.ToFt(p.Pos, p.Altitude) + fwd * 11f - up * 0.5f;
 
     private Formation NewFormation(Vector2 playerPos, float playerAlt, Func<float, float> extentOfFactor, Func<float, float> factorOfAltitude, bool anywhere)
     {
@@ -151,7 +130,7 @@ public sealed class Traffic
         };
         var count = _rng.Next(2, 6);
         for (var i = 0; i < count; i++)
-            f.Planes.Add(new Plane { Formation = f, Slot = i, Color = f.Color, Mph = f.Mph, TurnRate = f.TurnRate, Altitude = alt, Heading = f.Heading });
+            f.Planes.Add(new Plane { Formation = f, Slot = i, Color = f.Color, Mph = f.Mph, TurnRate = f.TurnRate, Altitude = alt, Heading = f.Heading, Salt = _rng.Next(64) });
         return f;
     }
 
@@ -165,7 +144,7 @@ public sealed class Traffic
             Altitude = altitude, Heading = heading, Mph = mph, TurnRate = 0f, Color = _rng.Next(Colors.Length),
         };
         for (var i = 0; i < 3; i++)
-            f.Planes.Add(new Plane { Formation = f, Slot = i, Color = f.Color, Mph = mph, Altitude = altitude, Heading = heading });
+            f.Planes.Add(new Plane { Formation = f, Slot = i, Color = f.Color, Mph = mph, Altitude = altitude, Heading = heading, Salt = _rng.Next(64) });
         if (_formations.Count >= FormationCount + 1) _formations.RemoveAt(0);
         _formations.Add(f);
     }
@@ -254,18 +233,10 @@ public sealed class Traffic
         return true;
     }
 
-    /// <summary>A round hits a part of a plane (see DamageModel.Hit). When the damage brings the plane down it catches fire
-    /// and leaves its formation. Returns the hit points the part lost.</summary>
+    /// <summary>A round hits a part of a plane (see AircraftDamage.Hit). Returns the hit points the part lost.</summary>
     public float Hit(Plane p, Part part, DamageTuning.Weapon weapon, float impactSpeedFtS)
     {
-        var loss = DamageModel.Hit(p.Parts, part, weapon, impactSpeedFtS, _rng);
-        if (p.State != State.Flying || !DamageModel.Downed(p.Parts)) return loss;
-        p.State = State.Burning;
-        p.SpinDir = _rng.Next(2) == 0 ? -1f : 1f;
-        p.Formation?.Planes.Remove(p);
-        p.Formation = null;
-        _loose.Add(p);
-        Ignited++;
-        return loss;
+        Hits++;
+        return p.Damage.Hit(part, weapon, impactSpeedFtS, _rng);
     }
 }

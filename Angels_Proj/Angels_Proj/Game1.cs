@@ -79,6 +79,9 @@ public class Game1 : Game
     private SpriteSphere _sphere;      // views of the (early-war) Spitfire from every angle: every aircraft is drawn from it
     private SpriteSphere _playerSphere; // the player's, the same sphere (the late-war one is still there: SpriteSphere.LoadLateWar)
     private readonly Fx _fx = new();
+    private EffectArt _effects;                 // fire animation and smoke sprites
+    private AircraftDamage _dmg = new();        // the player's damage, fuel, leaks and fire (Damage.cs)
+    private float _time;                        // seconds of play, for animations
     private readonly Traffic _traffic;
     private readonly System.Collections.Generic.List<Traffic.Plane> _craft = new(); // draw-sorted copy
     private Gunsight _gunsight;
@@ -159,7 +162,8 @@ public class Game1 : Game
         _instruments = new Instruments(GraphicsDevice, _pixel);
         _sphere = SpriteSphere.LoadEarlyWar(GraphicsDevice);
         _playerSphere = _sphere;
-        _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere);
+        _effects = new EffectArt(GraphicsDevice);
+        _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere, _effects);
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
         _w2 = new RenderTarget2D(GraphicsDevice, vp0.Width / 2, vp0.Height / 2);
@@ -199,6 +203,7 @@ public class Game1 : Game
     private void Reset()
     {
         _fm = new FlightModel { VerticalRateScale = _arcade ? 2f : 1f };
+        _dmg = new AircraftDamage();
         _phase = Phase.Flying;
         _particles.Clear();
         _pan = Vector2.Zero;
@@ -278,7 +283,7 @@ public class Game1 : Game
         foreach (var p in _traffic.All)
         {
             var f = DistFactor(p.Altitude);
-            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt || p.State != Traffic.State.Flying) continue;
+            if (f < 0.2f || _fm.Altitude - p.Altitude > World.ViewBoxFt) continue;
             if (needSight && !Gunsight.Sees(World.ToFt(p.Pos, p.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt)) continue;
             // The plane is under the mouse when the mouse is inside its targeting box.
             zones.Clear();
@@ -394,7 +399,7 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "PLAYER SPRITE", "SPAWN TARGETS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "PLAYER SPRITE", "HIT OWN ENGINE", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
@@ -403,6 +408,7 @@ public class Game1 : Game
         2 => _hudBars ? "ON" : "OFF",
         3 => _showHitboxes ? "ON" : "OFF",
         4 => _sphereSprite ? "3D VIEWS" : "OLD",
+        5 => $"{MathF.Ceiling(_dmg.EngineHp):0} HP",
         _ => "",
     };
 
@@ -418,7 +424,8 @@ public class Game1 : Game
             case 2: _hudBars = !_hudBars; break;
             case 3: _showHitboxes = !_showHitboxes; break;
             case 4: _sphereSprite = !_sphereSprite; break;
-            case 5:
+            case 5: _dmg.Damage(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
+            case 6:
                 _traffic.SpawnAhead(_pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
@@ -530,7 +537,7 @@ public class Game1 : Game
             // and the camera recentres.
             var panMargin0 = PanMarginPx * Scale;
             var following = false;
-            if (_tracked != null && _phase == Phase.Flying && _tracked.State == Traffic.State.Flying && _traffic.All.Contains(_tracked))
+            if (_tracked != null && _phase == Phase.Flying && _traffic.All.Contains(_tracked))
             {
                 var tk = Scale * GroundZoom / MathF.Max(0.2f, DistFactor(_tracked.Altitude));
                 var t0 = new Vector2(vp.Width / 2f, vp.Height / 2f) + (_tracked.Pos - _pos) * tk;   // where it is with no pan
@@ -597,6 +604,7 @@ public class Game1 : Game
         var hd = 0.5f * MathF.Sqrt(vp.Width * vp.Width + vp.Height * vp.Height);
         _traffic.Update(_pos, _fm.Altitude, f => hd * f / (Scale * GroundZoom), DistFactor);
         _fx.Update();
+        _time += 1f / 60f;
         _boxEdges.Clear();
         if (_showHitboxes) foreach (var p in _traffic.All) Traffic.HitBoxEdges(p, _boxEdges);
         _gunsight.DebugLines.Clear();
@@ -604,10 +612,10 @@ public class Game1 : Game
         _guns.Update(_traffic, _fx);
         _guns.Tracers(_tracers);
         _firing = false;
-        _spitfire.Update(_fm.Throttle, _phase == Phase.Flying);
+        _spitfire.Update(_fm.Throttle, _phase == Phase.Flying && _dmg.EnginePower > 0f);   // a dead engine's propeller winds down
 
         // The aimer comes up when the mouse is over a plane on the map that is also inside the gunsight's view.
-        // After that the mouse is free: the aimer stays on that plane until the sight loses it or it is shot down.
+        // After that the mouse is free: the aimer stays on that plane until the sight loses it.
         var rect = Instruments.GunsightRect(vp.Bounds, Scale);
         var aspect = (float)rect.Width / Math.Max(1, rect.Height);
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var sr, out var su, out var sf);
@@ -615,7 +623,7 @@ public class Game1 : Game
         _hovered = _mouseAim || _phase != Phase.Flying ? null : PlaneAimedAt(pickP, camFt, sr, su, sf, aspect, needSight: false);
         _hoverZones.Clear();
         if (_hovered != null && _showHitboxes) SpriteZones(_hovered, PlaneScreen(), _hoverZones); // drawn in the HITBOXES debug view only
-        if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) || _tracked.State != Traffic.State.Flying ||
+        if (_tracked == null || _phase != Phase.Flying || !_traffic.All.Contains(_tracked) ||
             !Gunsight.Sees(World.ToFt(_tracked.Pos, _tracked.Altitude) - camFt, sr, su, sf, aspect, World.ViewBoxFt))
             _tracked = PlaneAimedAt(pickP, camFt, sr, su, sf, aspect);
         var target = _phase == Phase.Flying && _tracked != null;
@@ -801,6 +809,16 @@ public class Game1 : Game
             targetBank = MathHelper.Clamp(err / HeadingSeekRef, -1f, 1f) * FlightModel.MaxBank;
         }
 
+        // The engine: its damage sets the power available (50 hp, half the thrust), the fuel burns and leaks, and a fire
+        // burns on while the throttle is up. A damaged engine trails black smoke (and fire), a leak a thin mist.
+        _dmg.Update(1f / 60f, _fm.Throttle, true);
+        _fm.EnginePower = _dmg.EnginePower;
+        if (_dmg.SmokeStrength > 0f || _dmg.OnFire || _dmg.Leaks > 0)
+        {
+            World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out _, out var eu, out var ef);
+            var engine = World.ToFt(_pos, _fm.Altitude) + ef * 11f - eu * 0.5f;
+            _fx.EngineTrail(engine - ef * 4f, -ef, _dmg.SmokeStrength, _dmg.FireStrength, _dmg.Leaks, true);
+        }
         _fm.Step(pitchKey, throttleKey, targetBank, BankResponse, _rng);
         if (kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
         dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
@@ -883,6 +901,7 @@ public class Game1 : Game
                 var sc = ps / Spitfire.ArtScale * SpriteSphere.MapScale;
                 Spitfire.DrawSphereShadow(_sb, _playerSphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
                 _spitfire.DrawSphere(_sb, _playerSphere, view, propBehind, centre, sc, Color.White);
+                if (_dmg.OnFire) DrawFire(_playerSphere, view, centre, sc, _dmg.FireStrength, 0);
             }
             else
             {
@@ -1186,7 +1205,7 @@ public class Game1 : Game
             World.Basis(c.Heading, c.Pitch, c.Bank, out var pr, out var pu, out var pf);
             var view = _sphere.Pick(Vector3.UnitY, -Vector3.UnitZ, pf, pr, pu);
             var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
-            var tint = c.State == Traffic.State.Burning ? new Color(95, 90, 90) : Color.White;
+            var tint = Color.White;
             if (pass == TrafficPass.Shadows)
             {
                 // Ground shadow: world-consistent size, nudged away from the plane with height.
@@ -1205,6 +1224,7 @@ public class Game1 : Game
             var screen = centre + (c.Pos - _pos) * z;
             var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
             _sb.Draw(_sphere.Sheet, screen, view.Src, tint * alpha, view.Roll, origin, scale * SpriteSphere.MapScale, flip, 0f);
+            if (c.Damage.OnFire) DrawFire(_sphere, view, screen, scale * SpriteSphere.MapScale, c.Damage.FireStrength * alpha, c.Salt);
         }
         if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
     }
@@ -1219,16 +1239,39 @@ public class Game1 : Game
             if (f < 0.2f || _fm.Altitude - p.Pos.Y > World.ViewBoxFt) continue;
             var z = Scale * GroundZoom / f;
             var pos = centre + (new Vector2(p.Pos.X, p.Pos.Z) * World.PxPerFoot - _pos) * z;
-            var size = Math.Max(1, (int)(p.Size * World.PxPerFoot * z));
-            var t = p.T;
-            var col = p.Kind switch
+            var size = p.Size * World.PxPerFoot * z;   // across, screen px
+            var a = p.Opacity;
+            if (a < 0.01f || size < 0.5f) continue;
+            if (p.Kind == Fx.Kind.Spark)
             {
-                Fx.Kind.Smoke => new Color(45, 45, 48) * (0.7f * t),
-                Fx.Kind.Fire => Color.Lerp(new Color(255, 90, 30), new Color(255, 225, 90), t) * Math.Min(1f, t * 2f),
-                _ => Color.White * t,
-            };
-            _sb.Draw(_pixel, new Rectangle((int)pos.X - size / 2, (int)pos.Y - size / 2, size, size), col);
+                var sz = Math.Max(1, (int)size);
+                _sb.Draw(_pixel, new Rectangle((int)pos.X - sz / 2, (int)pos.Y - sz / 2, sz, sz), Color.White * a);
+                continue;
+            }
+            // Smoke puffs and leaking-fuel mist, each sprite turned its own way so the trail doesn't repeat.
+            var tex = p.Kind == Fx.Kind.Smoke ? _effects.Smoke[p.Variant % _effects.Smoke.Length] : _effects.Mist;
+            var col = new Color(p.Shade * a, p.Shade * a, p.Shade * a, a);
+            _sb.Draw(tex, pos, null, col, p.Rot, new Vector2(tex.Width / 2f, tex.Height / 2f), size / (tex.Width * 0.85f), SpriteEffects.None, 0f);
         }
+    }
+
+    /// <summary>An engine fire on the map: the animation drawn on the engine of a plane's picture, turned so the flames
+    /// stream back along it (shorter as the plane points toward or away from us) and longer the fiercer the fire.
+    /// view is the plane's sphere view and spriteScale screen px per sphere px, as it was drawn.</summary>
+    private void DrawFire(SpriteSphere sphere, SpriteSphere.View view, Vector2 planeScreen, float spriteScale, float strength, int salt)
+    {
+        if (strength <= 0f) return;
+        var at = planeScreen + view.Project(sphere.Hub - new Vector3(3.5f, 0f, -0.4f)) * spriteScale;
+        var back = view.Project(new Vector3(-1f, 0f, 0f));               // sphere px per foot toward the tail, on screen
+        var len = back.Length() / SpriteSphere.PxPerFt;                   // 1 side-on, 0 end-on
+        var rot = len > 0.05f ? MathF.Atan2(back.X, -back.Y) : 0f;
+        var frame = _effects.FireFrame(_time, salt);
+        var lengthFt = (5f + 13f * strength) * MathF.Max(0.35f, len);
+        var widthFt = 3f + 5f * strength;
+        var ftPx = spriteScale * SpriteSphere.PxPerFt;                    // screen px per foot
+        var sc = new Vector2(widthFt * ftPx / (frame.Width * EffectArt.FireWidthFrac), lengthFt * ftPx / (frame.Height * EffectArt.FireLengthFrac));
+        // A little of the colour is added rather than laid over, so the flames glow against what's behind them.
+        _sb.Draw(frame, at, null, new Color(255, 255, 255, 215), rot, EffectArt.FireOrigin(frame), sc, SpriteEffects.None, 0f);
     }
 
     private enum CloudPass { Shadows, Below, Above }
@@ -1341,7 +1384,7 @@ public class Game1 : Game
             var hp = p.Parts[i];
             var state = DamageModel.StateOf(hp);
             var ry = y + (i + 1) * rowH;
-            var col = DamageModel.StateColor(state);
+            var col = state == PartState.Black ? new Color(90, 90, 90) : DamageModel.StateColor(state);   // black on the dark panel: grey
             PixelFont.Draw(_sb, _pixel, DamageModel.Name((Part)i), new Vector2(x, ry), px, col);
             var v = $"{MathF.Ceiling(hp):0} {DamageModel.Name(state)}";
             PixelFont.Draw(_sb, _pixel, v, new Vector2(x + w - PixelFont.Measure(v, px), ry), px, col);
@@ -1373,6 +1416,12 @@ public class Game1 : Game
         Row(line++, "THROTTLE", $"{_fm.Throttle * 100f:0}%", _fm.Throttle, new Color(94, 224, 160));
         var ammo = _guns.AmmoLeft;
         Row(line++, "AMMO", $"{ammo}", ammo / (float)(Guns.GunCount * Guns.RoundsPerGun), new Color(255, 190, 70));
+        // Engine: hit points are the power available, in the colour of its damage band (black drawn as dark grey here).
+        var eng = _dmg.EngineHp / DamageTuning.MaxHp;
+        var engCol = _dmg.EngineState == PartState.Black ? new Color(90, 90, 90) : DamageModel.StateColor(_dmg.EngineState);
+        Row(line++, "ENGINE", $"{eng * 100f:0}% POWER", eng, engCol);
+        Row(line++, "FUEL", _dmg.Leaks > 0 ? $"LEAK X{_dmg.Leaks}  {_dmg.FuelGal:0} GAL" : $"{_dmg.FuelGal:0} GAL",
+            _dmg.FuelGal / DamageTuning.FuelCapacityGal, _dmg.Leaks > 0 ? new Color(255, 140, 40) : new Color(120, 200, 255));
         if (_hudBars)
         {
             var ias = _fm.IasMph;
@@ -1386,11 +1435,16 @@ public class Game1 : Game
         var ty = y + line * rowH;
         PixelFont.Draw(_sb, _pixel, $"TAS {_fm.TasMph:0} MPH   MACH {_fm.Mach:0.00}   G {_fm.LoadFactor:0.0}", new Vector2(x, ty), px, white);
         PixelFont.Draw(_sb, _pixel, $"PITCH {MathHelper.ToDegrees(_fm.Gamma):+0;-0;0}  SET {_fm.PitchCmdDeg:+0;-0;0}", new Vector2(x, ty + 10 * px), px, white);
-        PixelFont.Draw(_sb, _pixel, $"HITS {_traffic.Ignited}", new Vector2(x, ty + 20 * px), px, white);
+        PixelFont.Draw(_sb, _pixel, $"HITS {_traffic.Hits}", new Vector2(x, ty + 20 * px), px, white);
         if (_arcade) PixelFont.Draw(_sb, _pixel, "ARCADE", new Vector2(x, ty + 30 * px), px, new Color(255, 206, 84));
 
         var wy = ty + 42 * px;
         if (_fm.Stalled) PixelFont.Draw(_sb, _pixel, "STALL", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
         else if (_fm.Overspeed) PixelFont.Draw(_sb, _pixel, "OVERSPEED", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
+        wy += 20 * px;
+        if (_dmg.OnFire && (_time * 3f) % 1f < 0.6f)
+            PixelFont.Draw(_sb, _pixel, $"ENGINE FIRE {_dmg.FireStrength * 100f:0}%", new Vector2(x, wy), px * 2, new Color(255, 120, 40));
+        else if (_dmg.FuelGal <= 0f) PixelFont.Draw(_sb, _pixel, "OUT OF FUEL", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
+        else if (_dmg.EngineHp <= 0f) PixelFont.Draw(_sb, _pixel, "ENGINE DEAD", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
     }
 }
