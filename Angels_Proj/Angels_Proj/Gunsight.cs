@@ -364,7 +364,6 @@ public sealed class Gunsight
 
         // Planes: each is the view of the sprite sphere that looks at it from where we are, laid flat to the view and
         // turned so its wings and fin lie right. It fades into the sky toward the edge of the box.
-        var sheetW = (float)_sphere.Sheet.Width; var sheetH = (float)_sphere.Sheet.Height;
         foreach (var p in planes)
         {
             var pos = World.ToFt(p.Pos, p.Altitude) - camPos;
@@ -373,13 +372,15 @@ public sealed class Gunsight
             if (dist2 > Box * Box || depth < 10f) continue;
             var hazeK = World.Smooth(2200f, Box, MathF.Sqrt(dist2)); // fades to sky colour at the edge of the box
             World.Basis(p.Heading, p.Pitch, p.Bank, out var pr, out var pu, out var pf);
-            var view = _sphere.Pick(-pos / MathF.Sqrt(dist2), upV, pf, pr, pu);
+            var sphere = p.Sphere;   // each aircraft is drawn from its own type's pictures
+            float sheetW = sphere.Sheet.Width, sheetH = sphere.Sheet.Height;
+            var view = sphere.Pick(-pos / MathF.Sqrt(dist2), upV, pf, pr, pu);
             var a = 1f - hazeK;
             var half = SpriteSphere.FrameFt / 2f;
             // Half a texel in from the frame's edge, so neighbouring frames don't bleed in.
             var uv = new Vector4((view.Src.X + 0.5f) / sheetW, (view.Src.Y + 0.5f) / sheetH,
                 (view.Src.Right - 0.5f) / sheetW, (view.Src.Bottom - 0.5f) / sheetH);
-            AddBillboard(_sphere.Sheet, MathF.Sqrt(dist2), pos, rightV, upV, half, half, view.Roll, view.Flip, uv, new Color(a, a, a, a));
+            AddBillboard(sphere.Sheet, MathF.Sqrt(dist2), pos, rightV, upV, half, half, view.Roll, view.Flip, uv, new Color(a, a, a, a));
 
             // Engine fire: the animation laid flat to the view with its base on the engine, turned so the flames stream
             // back along the plane as we see it (shorter when it points toward or away from us), bigger the fiercer it is.

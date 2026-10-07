@@ -32,6 +32,15 @@ public abstract class Aircraft
 
     public AircraftPart this[Part p] => Parts[(int)p];
 
+    // ---------------------------------------------------------------- look
+
+    /// <summary>Its propellers (one each for a single-engined fighter, two or four for a twin or a bomber), each with its
+    /// place on the airframe and how fast it is turning.</summary>
+    public readonly Propeller[] Propellers;
+
+    /// <summary>Where an engine fire is drawn on it, in its sprite sphere's frame (feet: x nose, y left, z up).</summary>
+    public readonly Vector3[] FirePoints;
+
     // ---------------------------------------------------------------- fuel, leaks, fire
 
     public float FuelGal;
@@ -78,9 +87,13 @@ public abstract class Aircraft
     /// <param name="airframe">Its airframe and limits, which its flight model flies by.</param>
     /// <param name="hitBoxes">Its hit boxes, each tagged with its part.</param>
     /// <param name="armor">Each part's armour, integrity and damage multiplier, in Part order.</param>
+    /// <param name="look">Where its propellers and engine fires are drawn.</param>
     protected Aircraft(Airframe airframe, DamageTuning.HitBox[] hitBoxes, float[] armor, float[] integrity, float[] damageMultiplier,
-        Pilot pilot, SpriteSphere sphere)
+        AircraftLook look, Pilot pilot, SpriteSphere sphere)
     {
+        Propellers = new Propeller[look.Propellers.Length];
+        for (var i = 0; i < Propellers.Length; i++) Propellers[i] = new Propeller(look.Propellers[i]);
+        FirePoints = look.FirePoints;
         Flight = new FlightModel(airframe);
         FuelGal = airframe.FuelCapacityGal;
         Pilot = pilot;
@@ -173,6 +186,7 @@ public abstract class Aircraft
             fx.EngineTrail(EngineFt() - f * 4f, -f, SmokeStrength, FireStrength, Leaks, IsPlayer);
         }
         Flight.Step(Airframe.RollResponse, rng);
+        foreach (var p in Propellers) p.Update(Flight.Throttle, EnginePower > 0f);
         if (Flight.GroundHit && !IsPlayer) Crashed = true;   // (the game handles the player's landings and crashes)
         var dir = new Vector2(MathF.Sin(Flight.Heading), -MathF.Cos(Flight.Heading));
         Pos += dir * Flight.GroundSpeed * World.PxPerFoot / 60f;
@@ -241,4 +255,42 @@ public sealed class Airframe
     public float MaxClimbDeg, MaxDiveDeg;           // steepest flight path the pilot can command
     public float CeilingFt;
     public float RollResponse;                      // how quickly it rolls to the bank asked for: fraction of the gap per tick
+}
+
+/// <summary>How an aircraft type looks beyond its sprite sphere: its propellers and where its engine fires show. Positions
+/// are in the sprite sphere's frame, feet from the middle of a frame (x toward the nose, y toward the left wing, z up).</summary>
+public sealed class AircraftLook
+{
+    public PropellerSpec[] Propellers;
+    public Vector3[] FirePoints;
+}
+
+/// <summary>One propeller of a type: where its hub is, how many blades, how big, and which way it turns.</summary>
+public sealed class PropellerSpec
+{
+    public Vector3 Hub;
+    public int Blades;
+    public float RadiusFt, SpinnerFt;
+    /// <summary>+1 clockwise seen from the cockpit (over the top toward the right wing), -1 the other way.</summary>
+    public float Turn = 1f;
+}
+
+/// <summary>A propeller on one aircraft, turning with its engine. It turns at a rate the eye can follow rather than its
+/// real one, which would only alias into a bar that looks still.</summary>
+public sealed class Propeller
+{
+    public const float IdleSpin = 0.2f, FullSpin = 0.55f;   // rad per tick; under pi/4, so it never seems to run backwards
+
+    public readonly PropellerSpec Spec;
+    public float Angle, Rate;                                // rad, rad per tick
+
+    public Propeller(PropellerSpec spec) { Spec = spec; }
+
+    /// <summary>One tick: it follows the throttle, and winds down when the engine is dead.</summary>
+    public void Update(float throttle, bool engineRunning)
+    {
+        var target = engineRunning ? IdleSpin + throttle * (FullSpin - IdleSpin) : 0f;
+        Rate += (target - Rate) * (engineRunning ? 0.05f : 0.02f);
+        Angle = MathHelper.WrapAngle(Angle - Rate * Spec.Turn);
+    }
 }

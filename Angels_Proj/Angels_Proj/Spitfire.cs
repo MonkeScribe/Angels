@@ -12,7 +12,7 @@ namespace Angels_Proj;
 public sealed class Spitfire : Aircraft
 {
     public Spitfire(Pilot pilot, SpriteSphere sphere)
-        : base(MakeAirframe(), HitBoxes, Armor, Integrity, DamageMultiplier, pilot, sphere) { }
+        : base(MakeAirframe(), HitBoxes, Armor, Integrity, DamageMultiplier, Look, pilot, sphere) { }
 
     /// <summary>A fresh Spitfire airframe (each aircraft gets its own, so one can be changed without the others).</summary>
     public static Airframe MakeAirframe() => new()
@@ -51,6 +51,19 @@ public sealed class Spitfire : Aircraft
         MaxClimbDeg = 60f, MaxDiveDeg = 90f,
         CeilingFt = 51550f,
         RollResponse = 0.18f,
+    };
+
+    // ---- Look ----
+
+    /// <summary>One three-bladed propeller (early war, de Havilland), 10 ft 9 in across, its hub on the nose of the
+    /// early-war sprite sphere; the engine fire shows a little behind it on the cowling.</summary>
+    public static readonly AircraftLook Look = new()
+    {
+        Propellers = new[]
+        {
+            new PropellerSpec { Hub = new Vector3(12.7f, 0f, -0.55f), Blades = 3, RadiusFt = 5.45f, SpinnerFt = 1.0f, Turn = 1f },
+        },
+        FirePoints = new[] { new Vector3(9.2f, 0f, -0.15f) },
     };
 
     // ---- Parts, in Part order: Engine, Canopy, LeftWing, RightWing, Tail, Fuselage ----

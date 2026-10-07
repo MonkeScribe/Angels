@@ -100,7 +100,6 @@ public class Game1 : Game
     private int _aimSkip;                        // readings to ignore after the game has moved the pointer
     private Aircraft _hovered;             // the plane under the mouse on the map, whose hit boxes are shown
     private readonly System.Collections.Generic.List<(Vector2[] poly, float damage)> _hoverZones = new();
-    private bool _sphereSprite = true;           // debug menu: the player's plane from the sprite sphere (off: the old pitch views)
     private bool _showHitboxes;                 // debug menu: draw the planes' hit boxes on the map and in the sight
     private readonly System.Collections.Generic.List<(Vector3 a, Vector3 b, Color color)> _boxEdges = new();
     private bool _mouseAim;                      // the pointer is captured for mouse aim
@@ -113,7 +112,7 @@ public class Game1 : Game
     private Aircraft _tracked; // the plane the aimer is on: picked with the mouse, kept while it stays in the sight's view
     private float _sightAlpha; // gunsight window: fades in when a target is in view, out when none is
     private bool _firing;
-    private SpitfireSprite _spitfire;
+    private AircraftArt _art;                   // draws every aircraft on the map: picture, propellers, fire
 
     private readonly World _worldModel = new();  // the aircraft in the world (World.cs); the player's is Player
     private readonly PlayerPilot _pilot = new(); // the player as a pilot: keys and mouse -> the aircraft's control inputs
@@ -168,6 +167,7 @@ public class Game1 : Game
         Player.Sphere = _playerSphere;
         _traffic = new Traffic(_sphere);
         _effects = new EffectArt(GraphicsDevice);
+        _art = new AircraftArt(_pixel, _effects);
         _gunsight = new Gunsight(GraphicsDevice, _sb, _sphere, _effects);
         var vp0 = GraphicsDevice.Viewport;
         _world = new RenderTarget2D(GraphicsDevice, vp0.Width, vp0.Height);
@@ -175,7 +175,6 @@ public class Game1 : Game
         _w4 = new RenderTarget2D(GraphicsDevice, vp0.Width / 4, vp0.Height / 4);
         _w8 = new RenderTarget2D(GraphicsDevice, vp0.Width / 8, vp0.Height / 8);
         _grass = Art.Grass(GraphicsDevice);
-        _spitfire = new SpitfireSprite(GraphicsDevice, _pixel);
         _tree = Art.Tree(GraphicsDevice);
         _clouds = new[] { Art.Cloud(GraphicsDevice, 11), Art.Cloud(GraphicsDevice, 23), Art.Cloud(GraphicsDevice, 37) };
         _houses = new[]
@@ -340,48 +339,27 @@ public class Game1 : Game
         return true;
     }
 
-    /// <summary>The player's view in the sprite sphere for the map, which looks straight down with north at the top, and whether
-    /// the nose points away from us so that the airframe hides the propeller.</summary>
-    private SpriteSphere.View PlayerView(out bool propBehind)
-    {
-        World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
-        propBehind = f.Y < -0.1f;
-        return _playerSphere.Pick(Vector3.UnitY, -Vector3.UnitZ, f, r, u);
-    }
-
     /// <summary>One tick with the trigger held: every gun fires its share of rounds, each leaving at muzzle velocity
-    /// plus the plane's own velocity, and each wing that fired flashes.</summary>
+    /// plus the plane's own velocity.</summary>
     private void Fire()
     {
         _firing = true;
         World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
         var gs = _fm.GroundSpeed;
         var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
-        // Where each muzzle is on the map, from the sprite as it is drawn (it is drawn bigger than life), so the round
-        // starts at the barrel tip on screen.
-        var kw = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * SpitfireSprite.ArtScale / GroundZoom;
-        float ch = MathF.Cos(_fm.Heading), sh = MathF.Sin(_fm.Heading), bankSq = MathF.Cos(_fm.Bank * 0.6f);
+        // Where each muzzle is on the map, from the picture as it is drawn (bigger than life), so the round starts at the
+        // barrel tip on screen: the muzzle in the sphere's frame (x nose, y left, z up; its centre is a little ahead of
+        // the plane's origin and above the nose's axis), put where the picture shows it.
+        var kws = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f)))
+                  * SpriteSphere.MapScale / GroundZoom;                                 // world px per px of the sphere's picture
+        var view = AircraftArt.MapView(Player);
         var mapMuzzles = new Vector2[Guns.GunCount];
-        var view = PlayerView(out _);
-        var kws = kw / SpitfireSprite.ArtScale * SpriteSphere.MapScale;   // world px per px of the sphere's sprite
         for (var g = 0; g < Guns.GunCount; g++)
         {
-            if (_sphereSprite)
-            {
-                // The muzzle in the sphere's frame (x nose, y left, z up; its centre is a little ahead of the plane's origin
-                // and above the nose's axis), put where the picture shows it.
-                var m = Guns.Muzzles[g];
-                mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z, -m.X, m.Y) + _playerSphere.MuzzleShift) * kws;
-                continue;
-            }
-            var sp = Guns.MuzzleSpritePx[g] - SpitfireSprite.Origin;
-            var off = new Vector2(sp.X * bankSq, sp.Y) * kw;
-            mapMuzzles[g] = _pos + new Vector2(off.X * ch - off.Y * sh, off.X * sh + off.Y * ch);
+            var m = Guns.Muzzles[g];
+            mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z, -m.X, m.Y) + Player.Sphere.MuzzleShift) * kws;
         }
-        var wings = _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel, mapMuzzles);
-        if (!Guns.ShowEffects) return;
-        if ((wings & 1) != 0) _spitfire.Shot(0, _rng);
-        if ((wings & 2) != 0) _spitfire.Shot(1, _rng);
+        _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel, mapMuzzles);
     }
 
     private bool Pressed(Keys k) => _kb.IsKeyDown(k) && !_prevKb.IsKeyDown(k);
@@ -403,7 +381,7 @@ public class Game1 : Game
         }
     }
 
-    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "PLAYER SPRITE", "HIT OWN ENGINE", "SPAWN TARGETS", "CLOSE" };
+    private static readonly string[] MenuRows = { "MODE", "CLOUDS", "HUD BARS", "HITBOXES", "HIT OWN ENGINE", "SPAWN TARGETS", "CLOSE" };
 
     private string MenuValue(int i) => i switch
     {
@@ -411,8 +389,7 @@ public class Game1 : Game
         1 => _cloudsOn ? "ON" : "OFF",
         2 => _hudBars ? "ON" : "OFF",
         3 => _showHitboxes ? "ON" : "OFF",
-        4 => _sphereSprite ? "3D VIEWS" : "OLD",
-        5 => $"{MathF.Ceiling(_dmg.EngineHp):0} HP",
+        4 => $"{MathF.Ceiling(_dmg.EngineHp):0} HP",
         _ => "",
     };
 
@@ -427,9 +404,8 @@ public class Game1 : Game
             case 1: _cloudsOn = !_cloudsOn; break;
             case 2: _hudBars = !_hudBars; break;
             case 3: _showHitboxes = !_showHitboxes; break;
-            case 4: _sphereSprite = !_sphereSprite; break;
-            case 5: _dmg.DamagePart(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
-            case 6:
+            case 4: _dmg.DamagePart(Part.Engine, 10f, _rng); break;   // test the engine's damage bands, leaks and fire
+            case 5:
                 _traffic.SpawnAhead(_worldModel, _pos, _fm.Altitude, _fm.Heading, 900f, MathF.Max(120f, _fm.TasMph - 40f));
                 _menuOpen = false;
                 break;
@@ -617,7 +593,6 @@ public class Game1 : Game
         _guns.Update(_worldModel, Player, _fx);
         _guns.Tracers(_tracers);
         _firing = false;
-        _spitfire.Update(_fm.Throttle, _phase == Phase.Flying && _dmg.EnginePower > 0f);   // a dead engine's propeller winds down
 
         // The aimer comes up when the mouse is over a plane on the map that is also inside the gunsight's view.
         // After that the mouse is free: the aimer stays on that plane until the sight loses it.
@@ -888,24 +863,12 @@ public class Game1 : Game
         if (_phase != Phase.Wrecked)
         {
             var shadowT = MathHelper.Clamp(_fm.Altitude / 5000f, 0f, 2.5f);
-            var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * SpitfireSprite.ArtScale;
+            var sc = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f))) * SpriteSphere.MapScale;
             var shadowAt = centre + new Vector2(0.18f, 0.26f) * 110f * shadowT * s;
-            if (_sphereSprite)
-            {
-                // The sprite sphere: the picture for how the plane is turned (heading, pitch and bank all show in it).
-                var view = PlayerView(out var propBehind);
-                var sc = ps / SpitfireSprite.ArtScale * SpriteSphere.MapScale;
-                SpitfireSprite.DrawSphereShadow(_sb, _playerSphere, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
-                _spitfire.DrawSphere(_sb, _playerSphere, view, propBehind, centre, sc, Color.White);
-                if (_dmg.OnFire) DrawFire(_playerSphere, view, centre, sc, _dmg.FireStrength, 0);
-            }
-            else
-            {
-                _spitfire.DrawShadow(_sb, shadowAt, _fm.Heading, new Vector2(ps * 0.9f), _fm.Gamma, new Color(0, 0, 0, 80) * vis);
-                // Narrow the wingspan slightly when banked for a hint of tilt.
-                var squash = new Vector2(MathF.Cos(_fm.Bank * 0.6f), 1f) * ps; // the pitch views are already foreshortened
-                _spitfire.Draw(_sb, centre, _fm.Heading, squash, _fm.Gamma, Color.White);
-            }
+            // Drawn like every other aircraft (AircraftArt): the picture for how it is turned, propeller, fire.
+            var view = AircraftArt.MapView(Player);
+            _art.DrawShadow(_sb, Player, view, shadowAt, sc * 0.9f, new Color(0, 0, 0, 80) * vis);
+            _art.Draw(_sb, Player, view, centre, sc, 1f, _time);
         }
         else
         {
@@ -1192,16 +1155,10 @@ public class Game1 : Game
         var zGround = Zoom;
         // Same on-screen size as the player at the same altitude; nearer or further planes scale by perspective.
         var ps = s * 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f)));
-        var origin = new Vector2(SpriteSphere.Frame / 2f);
         foreach (var c in _craft)
         {
             var f = DistFactor(c.Altitude);
-            // The map looks straight down with north at the top, so the plane's view is picked for that: its heading,
-            // pitch and bank all come out of which picture of the sphere it is and how it is turned.
-            World.Basis(c.Heading, c.Pitch, c.Bank, out var pr, out var pu, out var pf);
-            var view = _sphere.Pick(Vector3.UnitY, -Vector3.UnitZ, pf, pr, pu);
-            var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
-            var tint = Color.White;
+            var view = AircraftArt.MapView(c);
             if (pass == TrafficPass.Shadows)
             {
                 // Ground shadow: world-consistent size, nudged away from the plane with height.
@@ -1209,7 +1166,7 @@ public class Game1 : Game
                 var sp = centre + (c.Pos + new Vector2(4f, 6f) * (c.Altitude / 1000f) - _pos) * zGround;
                 var ss = worldScale * zGround;
                 if (ss * 96f < 3f) continue;
-                _sb.Draw(_sphere.Sheet, sp, view.Src, new Color(0, 0, 0, 70), view.Roll, origin, ss * 0.9f * SpriteSphere.MapScale, flip, 0f);
+                _art.DrawShadow(_sb, c, view, sp, ss * 0.9f * SpriteSphere.MapScale, new Color(0, 0, 0, 70));
                 continue;
             }
             var above = c.Altitude > _fm.Altitude;
@@ -1219,8 +1176,7 @@ public class Game1 : Game
             if (scale * 96f < 3f) continue;
             var screen = centre + (c.Pos - _pos) * z;
             var alpha = above ? MathHelper.Clamp((f - 0.2f) / 0.4f, 0f, 1f) : MathHelper.Clamp((World.ViewBoxFt - (_fm.Altitude - c.Altitude)) / 1000f, 0f, 1f);
-            _sb.Draw(_sphere.Sheet, screen, view.Src, tint * alpha, view.Roll, origin, scale * SpriteSphere.MapScale, flip, 0f);
-            if (c.OnFire) DrawFire(_sphere, view, screen, scale * SpriteSphere.MapScale, c.FireStrength * alpha, c.Salt);
+            _art.Draw(_sb, c, view, screen, scale * SpriteSphere.MapScale, alpha, _time);
         }
         if (pass != TrafficPass.Shadows) DrawFx(centre, pass == TrafficPass.Above);
     }
@@ -1249,25 +1205,6 @@ public class Game1 : Game
             var col = new Color(p.Shade * a, p.Shade * a, p.Shade * a, a);
             _sb.Draw(tex, pos, null, col, p.Rot, new Vector2(tex.Width / 2f, tex.Height / 2f), size / (tex.Width * 0.85f), SpriteEffects.None, 0f);
         }
-    }
-
-    /// <summary>An engine fire on the map: the animation drawn on the engine of a plane's picture, turned so the flames
-    /// stream back along it (shorter as the plane points toward or away from us) and longer the fiercer the fire.
-    /// view is the plane's sphere view and spriteScale screen px per sphere px, as it was drawn.</summary>
-    private void DrawFire(SpriteSphere sphere, SpriteSphere.View view, Vector2 planeScreen, float spriteScale, float strength, int salt)
-    {
-        if (strength <= 0f) return;
-        var at = planeScreen + view.Project(sphere.Hub - new Vector3(3.5f, 0f, -0.4f)) * spriteScale;
-        var back = view.Project(new Vector3(-1f, 0f, 0f));               // sphere px per foot toward the tail, on screen
-        var len = back.Length() / SpriteSphere.PxPerFt;                   // 1 side-on, 0 end-on
-        var rot = len > 0.05f ? MathF.Atan2(back.X, -back.Y) : 0f;
-        var frame = _effects.FireFrame(_time, salt);
-        var lengthFt = (5f + 13f * strength) * MathF.Max(0.35f, len);
-        var widthFt = 3f + 5f * strength;
-        var ftPx = spriteScale * SpriteSphere.PxPerFt;                    // screen px per foot
-        var sc = new Vector2(widthFt * ftPx / (frame.Width * EffectArt.FireWidthFrac), lengthFt * ftPx / (frame.Height * EffectArt.FireLengthFrac));
-        // A little of the colour is added rather than laid over, so the flames glow against what's behind them.
-        _sb.Draw(frame, at, null, new Color(255, 255, 255, 215), rot, EffectArt.FireOrigin(frame), sc, SpriteEffects.None, 0f);
     }
 
     private enum CloudPass { Shadows, Below, Above }

@@ -40,20 +40,17 @@ public sealed class SpriteSphere
 
     public readonly Texture2D Sheet;
 
-    /// <summary>Where the propeller hub is in the frames, in feet from the middle of a frame (x nose, y left, z up).</summary>
-    public readonly Vector3 Hub;
-    public readonly int Blades;
     /// <summary>What to add to a gun muzzle (given as x right, y up, z forward from the plane's origin, as in Guns.Muzzles, then
     /// turned into the frame's axes) to find it in the frames: the frame's middle is not the plane's origin.</summary>
     public readonly Vector3 MuzzleShift;
 
     /// <summary>The late-war Spitfire (the other aircraft): four-bladed.</summary>
     public static SpriteSphere LoadLateWar(GraphicsDevice gd) =>
-        new(gd, LateWar, new Vector3(14.6f, 0f, -1.25f), 4, new Vector3(0.7f, 0f, -1.25f));
+        new(gd, LateWar, new Vector3(0.7f, 0f, -1.25f));   // (its propeller: 4 blades, hub at 14.6, 0, -1.25)
 
     /// <summary>The early-war Spitfire (the player): three-bladed, shorter in the nose.</summary>
     public static SpriteSphere LoadEarlyWar(GraphicsDevice gd) =>
-        new(gd, EarlyWar, new Vector3(12.7f, 0f, -0.55f), 3, new Vector3(-1.3f, 0f, -0.55f));
+        new(gd, EarlyWar, new Vector3(-1.3f, 0f, -0.55f));
 
     /// <summary>One of the views, in the plane's own frame (x nose, y left, z up): which way the camera is, which way is up
     /// and right in its picture.</summary>
@@ -92,9 +89,9 @@ public sealed class SpriteSphere
 
     private readonly List<Cand> _views = new();
 
-    private SpriteSphere(GraphicsDevice gd, string path, Vector3 hub, int blades, Vector3 muzzleShift)
+    private SpriteSphere(GraphicsDevice gd, string path, Vector3 muzzleShift)
     {
-        Hub = hub; Blades = blades; MuzzleShift = muzzleShift;
+        MuzzleShift = muzzleShift;
         Sheet = LoadSheet(gd, path);
         for (var col = 0; col < Cols; col++)
             for (var row = 0; row < Rows; row++)
