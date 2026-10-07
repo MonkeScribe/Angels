@@ -30,6 +30,8 @@ public sealed class FlightModel
     private const float NTurnMax = 7f, NStruct = 12f;          // g at full bank at reference speed; structural limit
     private const float QRef = 160f;                          // dynamic pressure (psf) of ~250 mph at sea level
     private const float StallDragCD = 0.12f;
+    private const float RudderRate = 0.0015f;      // rad per tick of flat yaw at full rudder (about 5 deg/s)
+    private const float RudderSlipDragCD = 0.012f; // extra drag at full rudder
     private const float StallNoseDropDegS = 75f;   // how fast a fully stalled nose falls toward the ground
     public const float MaxClimbDeg = 60f, MaxDiveDeg = 90f;
     private const float WheelSlewDeg = 5f;         // the wheel swings the nose this fast at most (deg per tick), ignoring the g limit
@@ -66,7 +68,9 @@ public sealed class FlightModel
     public float PitchCmdDeg;                      // commanded flight-path angle, deg; settles to the nearest 10 on release
     private bool _pointSwing;                      // the swing is the pointing assist's, so it uses the gentler rates
     private bool _wheelSteered;                    // the command came from the wheel: the nose goes straight to it and locks there
-    public float Throttle = 0.55f;
+    /// <summary>The pilot's inputs (Controls.cs): all the flight model takes from whoever is flying it.</summary>
+    public readonly ControlInputs Controls = new();
+    public float Throttle { get => Controls.Throttle; set => Controls.Throttle = value; }
     /// <summary>Fraction of the engine's power available, 0-1: set each tick from the engine's damage and fuel (Damage.cs).</summary>
     public float EnginePower = 1f;
     private bool _pitchHeld;
@@ -173,12 +177,13 @@ public sealed class FlightModel
     public float StallSpeed(float n) =>
         MathF.Sqrt(2f * n * WeightLb / (Rho * WingArea * CLmax));
 
-    /// <param name="pitchKey">-1 nose down, +1 nose up, 0 released.</param>
-    /// <param name="throttleKey">+1 more, -1 less.</param>
-    /// <param name="targetBank">Desired bank (arcade units), within +/-MaxBank.</param>
-    public void Step(float pitchKey, float throttleKey, float targetBank, float bankResponse, Random rng)
+    /// <summary>One tick, flying on Controls: throttle sets the power, pitch moves the nose, roll the bank (and so the
+    /// turn), yaw swings the nose flat with the rudder.</summary>
+    public void Step(float bankResponse, Random rng)
     {
-        Throttle = MathHelper.Clamp(Throttle + throttleKey * 0.012f, 0f, 1f);
+        Controls.Clamp();
+        var pitchKey = Controls.Pitch;
+        var targetBank = Controls.Roll * MaxBank;
         if (pitchKey == 0f) _keysBlocked = false;
         if (_keysBlocked) pitchKey = 0f;
         if (Aiming)
@@ -262,6 +267,7 @@ public sealed class FlightModel
         if (mach > 0.75f) cd += WaveDragK * (mach - 0.75f) * (mach - 0.75f);
         var ias = v * MathF.Sqrt(Rho / Rho0) * Mph;
         if (ias > VneMph) { var o = (ias - VneMph) / 50f; cd += OverspeedDragK * o * o; }
+        cd += RudderSlipDragCD * MathF.Abs(Controls.Yaw);   // a skid presents the fuselage's side to the air
         var drag = cd * q * WingArea;
 
         // Propeller thrust: power / speed, with efficiency falling off at low speed.
@@ -295,13 +301,15 @@ public sealed class FlightModel
             Bank += ((float)rng.NextDouble() - 0.5f) * 0.08f * stallDepth; // wing drops as it lets go
         }
         var turnPart = Bank * TurnCoeff * controlEff * turnSpeedFactor * turnScale;
-        Heading = MathHelper.WrapAngle(Heading + noise + turnPart);
+        // Rudder: a flat swing of the nose, stronger with airflow over the tail.
+        var rudderPart = Controls.Yaw * RudderRate * controlEff;
+        Heading = MathHelper.WrapAngle(Heading + noise + turnPart + rudderPart);
 
         // Instrument feeds: turn rate (rad/s), and the slip ball. In this turn model bank and turn rate
         // always agree (a coordinated turn), so the ball only leaves centre when the wing stops delivering
         // the turn the bank asked for (turnScale < 1) or the airframe is being buffeted.
-        YawRate = (noise + turnPart) * 60f;
+        YawRate = (noise + turnPart + rudderPart) * 60f;
         var bankSign = MathF.Sign(Bank) * MathF.Min(1f, MathF.Abs(Bank) / MaxBank);
-        SlipBall = MathHelper.Clamp(bankSign * (1f - turnScale) * 1.5f + noise * 25f, -1f, 1f);
+        SlipBall = MathHelper.Clamp(bankSign * (1f - turnScale) * 1.5f + noise * 25f - Controls.Yaw * 0.7f, -1f, 1f);
     }
 }

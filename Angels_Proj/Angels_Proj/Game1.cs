@@ -819,7 +819,14 @@ public class Game1 : Game
             var engine = World.ToFt(_pos, _fm.Altitude) + ef * 11f - eu * 0.5f;
             _fx.EngineTrail(engine - ef * 4f, -ef, _dmg.SmokeStrength, _dmg.FireStrength, _dmg.Leaks, true);
         }
-        _fm.Step(pitchKey, throttleKey, targetBank, BankResponse, _rng);
+        // The player's inputs, as every pilot gives them (Controls.cs): the throttle lever moves while Shift/Z is held,
+        // W/S is the elevator, the bank wanted from the mouse is the ailerons, A/D the rudder.
+        var ctl = _fm.Controls;
+        ctl.Throttle += throttleKey * 0.012f;
+        ctl.Pitch = pitchKey;
+        ctl.Roll = targetBank / FlightModel.MaxBank;
+        ctl.Yaw = (kb.IsKeyDown(Keys.D) ? 1f : 0f) - (kb.IsKeyDown(Keys.A) ? 1f : 0f);
+        _fm.Step(BankResponse, _rng);
         if (kb.IsKeyDown(Keys.Space) || m.LeftButton == ButtonState.Pressed) Fire();
         dir = new Vector2(MathF.Sin(_fm.Heading), -MathF.Cos(_fm.Heading));
         _pos += dir * _fm.GroundSpeed * PxPerFoot / 60f;
