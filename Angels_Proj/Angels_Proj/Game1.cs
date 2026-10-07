@@ -484,6 +484,23 @@ public class Game1 : Game
         _gunsight.SmokeBudget = _graphicsHigh ? 0 : LowSmokeBudget;
     }
 
+    private Part _debugPart = Part.Engine;    // the part the debug menu's damage buttons hit
+
+    /// <summary>Who the debug menu's HIT TARGET hits: the test target, else the aircraft being aimed at, else the nearest.</summary>
+    private Aircraft DebugTarget()
+    {
+        if (_testTarget != null && InTest) return _testTarget;
+        if (_tracked != null) return _tracked;
+        Aircraft best = null;
+        var bestD = float.MaxValue;
+        foreach (var a in _worldModel.Others)
+        {
+            var d = Vector2.DistanceSquared(a.Pos, _pos);
+            if (d < bestD) { bestD = d; best = a; }
+        }
+        return best;
+    }
+
     /// <summary>The debug menu's options, by section.</summary>
     private void BuildMenu()
     {
@@ -508,7 +525,10 @@ public class Game1 : Game
         m.Add("SMOKE BUDGET", () => _gunsight.SmokeBudget > 0 ? _gunsight.SmokeBudget.ToString() : "NONE", () =>
             _gunsight.SmokeBudget = _gunsight.SmokeBudget switch { 0 => 80, 80 => 160, 160 => 320, _ => 0 });
         m.Section("DAMAGE");
-        m.Add("HIT OWN ENGINE", () => $"{MathF.Ceiling(_dmg.EngineHp):0} HP", () => _dmg.DamagePart(Part.Engine, 10f, _rng));
+        m.Add("PART", () => DamageModel.Name(_debugPart), () => _debugPart = (Part)(((int)_debugPart + 1) % DamageModel.PartCount));
+        m.Add("HIT OWN -25", () => $"{MathF.Ceiling(_dmg[_debugPart].Hp):0} HP", () => _dmg.DamagePart(_debugPart, 25f, _rng));
+        m.Add("HIT TARGET -25", () => DebugTarget() is { } t ? $"{MathF.Ceiling(t[_debugPart].Hp):0} HP" : "NONE",
+            () => DebugTarget()?.DamagePart(_debugPart, 25f, _rng));
         m.Section("TESTS");
         m.Add("GUN TEST", () => MenuPanel.OnOff(_test == TestMode.Gun), () => { if (_test == TestMode.Gun) Reset(); else StartGunTest(); });
         m.Add("FPS: FOLLOW THROUGH CLOUD", () => MenuPanel.OnOff(_test == TestMode.FollowThroughCloud),
@@ -1280,6 +1300,13 @@ public class Game1 : Game
                 _sb.Draw(_pixel, new Rectangle((int)pos.X - sz / 2, (int)pos.Y - sz / 2, sz, sz), Color.White * a);
                 continue;
             }
+            if (p.Kind == Fx.Kind.Explosion)
+            {
+                var frame = _effects.ExplosionFrame(p.Age);
+                _sb.Draw(frame, pos, null, Color.White * a, p.Rot, new Vector2(frame.Width / 2f, frame.Height / 2f), size / frame.Width,
+                    SpriteEffects.None, 0f);
+                continue;
+            }
             // Smoke puffs and leaking-fuel mist, each sprite turned its own way so the trail doesn't repeat.
             var tex = p.Kind == Fx.Kind.Smoke ? _effects.Smoke[p.Variant % _effects.Smoke.Length] : _effects.Mist;
             var col = new Color(p.Shade * a, p.Shade * a, p.Shade * a, a);
@@ -1486,9 +1513,25 @@ public class Game1 : Game
         if (_fm.Stalled) PixelFont.Draw(_sb, _pixel, "STALL", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
         else if (_fm.Overspeed) PixelFont.Draw(_sb, _pixel, "OVERSPEED", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
         wy += 20 * px;
-        if (_dmg.OnFire && (_time * 3f) % 1f < 0.6f)
-            PixelFont.Draw(_sb, _pixel, $"ENGINE FIRE {_dmg.FireStrength * 100f:0}%", new Vector2(x, wy), px * 2, new Color(255, 120, 40));
-        else if (_dmg.FuelGal <= 0f) PixelFont.Draw(_sb, _pixel, "OUT OF FUEL", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
-        else if (_dmg.EngineHp <= 0f) PixelFont.Draw(_sb, _pixel, "ENGINE DEAD", new Vector2(x, wy), px * 2, new Color(255, 94, 94));
+        var red = new Color(255, 94, 94);
+        // Out of control, worst first.
+        var lost = _fm.Failure switch
+        {
+            FlightFailure.NoseDive => "AIRFRAME BROKEN",
+            FlightFailure.Spin => "WING LOST - SPIN",
+            FlightFailure.DeadPilot => "PILOT KILLED",
+            _ => _dmg.Tail.Gone ? "TAIL LOST - NO PITCH OR ROLL" : null,
+        };
+        if (lost != null) { PixelFont.Draw(_sb, _pixel, lost, new Vector2(x, wy), px * 2, red); wy += 20 * px; }
+        // Fires, flashing, one line each.
+        var flash = (_time * 3f) % 1f < 0.6f;
+        foreach (var part in _dmg.Parts)
+        {
+            if (!part.OnFire) continue;
+            if (flash) PixelFont.Draw(_sb, _pixel, $"{part.Name} FIRE {_dmg.FireStrengthOf(part) * 100f:0}%", new Vector2(x, wy), px * 2, new Color(255, 120, 40));
+            wy += 20 * px;
+        }
+        if (_dmg.FuelGal <= 0f) PixelFont.Draw(_sb, _pixel, "OUT OF FUEL", new Vector2(x, wy), px * 2, red);
+        else if (_dmg.EngineHp <= 0f) PixelFont.Draw(_sb, _pixel, "ENGINE DEAD", new Vector2(x, wy), px * 2, red);
     }
 }

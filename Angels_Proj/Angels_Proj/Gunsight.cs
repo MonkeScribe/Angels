@@ -97,6 +97,7 @@ public sealed class Gunsight
         var packed = new List<Texture2D>(_cloudTex);
         packed.AddRange(effects.Smoke);
         packed.AddRange(effects.Fire);
+        packed.AddRange(effects.Explosion);
         packed.Add(effects.Mist);
         _atlas = BuildAtlas(gd, packed);
 
@@ -454,21 +455,24 @@ public sealed class Gunsight
             // Engine fire: the animation laid flat to the view with its base on the engine, turned so the flames stream
             // back along the plane as we see it (shorter when it points toward or away from us), bigger the fiercer it is.
             // Sorted by the engine's own distance, so it shows in front of the plane or behind it as it should.
-            if (p.OnFire)
+            // Fires, one on each burning part: the animation laid flat to the view with its base on the part, turned so the
+            // flames stream back along the plane as we see it (shorter when it points toward or away from us), bigger the
+            // fiercer it is. Sorted by the fire's own distance, so it shows in front of the plane or behind it as it should.
+            float bx = Vector3.Dot(-pf, rightV), by = Vector3.Dot(-pf, upV), bl = MathF.Sqrt(bx * bx + by * by);
+            var flameDir = bl > 0.05f ? (rightV * bx + upV * by) / bl : upV;
+            var roll = bl > 0.05f ? MathF.Atan2(bx, by) : 0f;
+            foreach (var part in p.Parts)
             {
-                var strength = p.FireStrength;
-                var engine = p.EngineFt() - camPos;
-                float bx = Vector3.Dot(-pf, rightV), by = Vector3.Dot(-pf, upV), bl = MathF.Sqrt(bx * bx + by * by);
-                var flameDir = bl > 0.05f ? (rightV * bx + upV * by) / bl : upV;
-                var roll = bl > 0.05f ? MathF.Atan2(bx, by) : 0f;
+                if (!part.OnFire) continue;
+                var strength = p.FireStrengthOf(part);
+                var at = p.FireFt(part) - camPos;
                 var hh = (5f + 13f * strength) * MathF.Max(0.35f, bl) / (2f * EffectArt.FireLengthFrac);
                 var hw = (3f + 5f * strength) / (2f * EffectArt.FireWidthFrac);
-                var centre = engine + flameDir * hh * (2f * EffectArt.FireBaseY - 1f);
-                AddBillboard(_effects.FireFrame(_time, p.Salt), engine.Length(), centre, rightV, upV, hw, hh, roll, false,
+                var centre = at + flameDir * hh * (2f * EffectArt.FireBaseY - 1f);
+                AddBillboard(_effects.FireFrame(_time, p.Salt + (int)part.Kind), at.Length(), centre, rightV, upV, hw, hh, roll, false,
                     new Vector4(0f, 0f, 1f, 1f), new Color(a, a, a, 0.8f * a));   // partly added light, so it glows
             }
         }
-
         // Smoke trails and fuel mist as camera-facing sprites (sorted with the planes and clouds), sparks as plain quads.
         // Our own trail is left out: it starts at our cowling, right in front of the sight, and is behind us at once.
         var viewTanS = MathF.Tan(MathHelper.ToRadians(HFovDeg) / 2f);
@@ -479,11 +483,12 @@ public sealed class Gunsight
         {
             c = p.Pos - camPos;
             dist = c.Length();
-            return !p.Own && Vector3.Dot(c, fwd) >= 8f && dist <= Box;
+            // (Our own explosion still shows: it's out in front of us, unlike our own trail.)
+            return (!p.Own || p.Kind == Fx.Kind.Explosion) && Vector3.Dot(c, fwd) >= 8f && dist <= Box;
         }
         if (ShowSmoke)
             foreach (var p in fx.Particles)
-                if (p.Kind != Fx.Kind.Spark && InView(p, out _, out _)) SmokeSeen++;
+                if (p.Kind is Fx.Kind.Smoke or Fx.Kind.Vapour && InView(p, out _, out _)) SmokeSeen++;
         // Over budget: keep every stride-th puff (by its id, so the same ones stay picked from frame to frame).
         var stride = SmokeBudget > 0 ? Math.Max(1, (SmokeSeen + SmokeBudget - 1) / SmokeBudget) : 1;
         foreach (var p in fx.Particles)
@@ -498,6 +503,13 @@ public sealed class Gunsight
                 Vector3 q0 = c - dx - dy, q1 = c + dx - dy, q2 = c + dx + dy, q3 = c - dx + dy;
                 _blend.Add(Vtx(q0, col)); _blend.Add(Vtx(q1, col)); _blend.Add(Vtx(q2, col));
                 _blend.Add(Vtx(q0, col)); _blend.Add(Vtx(q2, col)); _blend.Add(Vtx(q3, col));
+                continue;
+            }
+            if (p.Kind == Fx.Kind.Explosion)
+            {
+                var hx = p.Size / 2f;
+                AddBillboard(_effects.ExplosionFrame(p.Age), dist, c, rightV, upV, hx, hx, p.Rot, false, new Vector4(0f, 0f, 1f, 1f),
+                    new Color(op, op, op, op));
                 continue;
             }
             if (!ShowSmoke || p.Id % stride != 0) continue;

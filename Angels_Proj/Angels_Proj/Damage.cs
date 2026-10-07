@@ -84,6 +84,29 @@ public static class DamageTuning
     /// <summary>Black smoke from the engine starts below this many hit points and thickens to its heaviest at zero.</summary>
     public static float SmokeStartsBelowHp = 75f;
 
+    /// <summary>A fire on any other part (it can only catch from a neighbouring part that is gone and burning, or from the
+    /// engine blowing up) eats that part at between these rates, weakest to strongest fire; it doesn't go out. Its strength
+    /// follows the part: FireMinStrength on a whole part, 100% on one at 0 hp.</summary>
+    public static float PartFireBurnMinHpPerSec = 2f, PartFireBurnMaxHpPerSec = 6f, FireMinStrength = 0.2f;
+
+    /// <summary>A part that is gone and burning sets each neighbour alight at this chance per second (see DamageModel.Neighbours).</summary>
+    public static float FireSpreadChancePerSec = 0.35f;
+
+    // ---------------------------------------------------------------- controls
+
+    /// <summary>How much control a damaged wing or tail costs, as a fraction of its maximum rates: ControlLossAt75 with the
+    /// part at 75 hp, ControlLossAt50 at 50, then straight up to all of it at 0 (see DamageModel.ControlLoss). The tail
+    /// takes it off pitch, roll and rudder; each wing takes half of its own off roll and turn, there being two.</summary>
+    public static float ControlLossAt75 = 0.05f, ControlLossAt50 = 0.10f;
+
+    /// <summary>A black wing loses lift: from BlackWingLiftLoss just into black to all of it at 0 hp. The aircraft rolls
+    /// toward the wing with less lift, up to WingRollBias of its steepest bank with nothing held against it, and goes on
+    /// rolling slowly (WingRollDriftRadS) if the controls can't hold it.</summary>
+    public static float BlackWingLiftLoss = 0.3f, WingRollBias = 0.6f, WingRollDriftRadS = 0.25f;
+
+    /// <summary>With the tail gone nothing holds the nose up and it drops this fast; with the pilot dead it sinks this fast.</summary>
+    public static float TailGoneNoseDropDegS = 4f, DeadPilotNoseDropDegS = 2.5f;
+
     // ---------------------------------------------------------------- hit boxes
 
     /// <summary>One box of a part, in the aircraft's own frame in feet: x toward the right wing, y up, z toward the tail
@@ -102,6 +125,39 @@ public static class DamageTuning
 public static class DamageModel
 {
     public static readonly int PartCount = Enum.GetValues<Part>().Length;
+
+    /// <summary>Which parts touch which, for fire spreading: the engine sits ahead of the cockpit and the wing roots, the
+    /// fuselage joins everything, the tail hangs off the fuselage.</summary>
+    private static readonly Part[][] Touching =
+    {
+        new[] { Part.Canopy, Part.Fuselage, Part.LeftWing, Part.RightWing },              // Engine
+        new[] { Part.Engine, Part.Fuselage },                                             // Canopy
+        new[] { Part.Engine, Part.Fuselage },                                             // LeftWing
+        new[] { Part.Engine, Part.Fuselage },                                             // RightWing
+        new[] { Part.Fuselage },                                                          // Tail
+        new[] { Part.Engine, Part.Canopy, Part.LeftWing, Part.RightWing, Part.Tail },     // Fuselage
+    };
+
+    public static Part[] Neighbours(Part p) => Touching[(int)p];
+
+    /// <summary>The share of its maximum control rates a part's damage costs, 0-1 (see DamageTuning.ControlLossAt75):
+    /// little at first, then climbing straight to all of it below 50 hp.</summary>
+    public static float ControlLoss(float hp)
+    {
+        hp = MathHelper.Clamp(hp, 0f, DamageTuning.MaxHp);
+        float hi = DamageTuning.SlightAbove, mid = DamageTuning.ModerateAbove;
+        if (hp >= hi) return DamageTuning.ControlLossAt75 * (DamageTuning.MaxHp - hp) / (DamageTuning.MaxHp - hi);
+        if (hp >= mid) return MathHelper.Lerp(DamageTuning.ControlLossAt75, DamageTuning.ControlLossAt50, (hi - hp) / (hi - mid));
+        return MathHelper.Lerp(DamageTuning.ControlLossAt50, 1f, (mid - hp) / mid);
+    }
+
+    /// <summary>The share of a wing's lift lost, 0-1: none until black, then from BlackWingLiftLoss to all of it at 0 hp.</summary>
+    public static float LiftLoss(float hp)
+    {
+        if (hp <= 0f) return 1f;
+        if (hp > DamageTuning.CriticalAbove) return 0f;
+        return MathHelper.Lerp(DamageTuning.BlackWingLiftLoss, 1f, (DamageTuning.CriticalAbove - hp) / DamageTuning.CriticalAbove);
+    }
 
     public static PartState StateOf(float hp) =>
         hp >= DamageTuning.MaxHp ? PartState.Undamaged

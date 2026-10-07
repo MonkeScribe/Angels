@@ -3,6 +3,10 @@ using Microsoft.Xna.Framework;
 
 namespace Angels_Proj;
 
+/// <summary>Ways an aircraft can be past flying (see Aircraft.CheckLosses), in rising order of how badly: when two
+/// happen the worse one wins.</summary>
+public enum FlightFailure { None, DeadPilot, Spin, NoseDive }
+
 /// <summary>
 /// Point-mass flight model, in real units (feet, slugs, lb, ft/s), stepped at a fixed 60 ticks/s. It flies whatever
 /// Airframe it is given (Aircraft.cs): performance is not scripted but falls out of that airframe's thrust, drag, lift
@@ -54,6 +58,16 @@ public sealed class FlightModel
     public float Bank, Heading;
     public bool SnapOnRelease = true;               // let go of the stick: the pitch settles at the nearest 10 degrees
     public float VerticalRateScale = 1f;           // 1 = realistic; 2 = arcade (altitude changes twice as fast)
+
+    // What damage leaves of the controls, set each tick by the aircraft (Aircraft.UpdateControls). Authorities are the
+    // share of each maximum rate still there (1 = all of it): pitch (elevator), roll (ailerons), yaw (rudder) and turn.
+    public float PitchAuthority = 1f, RollAuthority = 1f, YawAuthority = 1f, TurnAuthority = 1f;
+    public float RollBias;                         // uncommanded roll from uneven lift, fraction of MaxBank (+ = right)
+    public float LiftLoss;                         // share of the wings' lift lost
+    public float NoseDropDegS;                     // the nose sinks this fast with nothing holding it up
+    /// <summary>Out of control (Aircraft.CheckLosses): the controls do nothing and the aircraft falls its own way.</summary>
+    public FlightFailure Failure;
+    public float SpinDir = 1f;                     // which way it rolls and turns when out of control (+1 right)
 
     // Read-outs.
     public float Rho, SoundSpeed, LoadFactor = 1f;
@@ -147,6 +161,58 @@ public sealed class FlightModel
         MathHelper.Clamp(MathF.Round(deg / PitchDetentDeg, MidpointRounding.AwayFromZero) * PitchDetentDeg,
             -MathF.Floor(Airframe.MaxDiveDeg / PitchDetentDeg) * PitchDetentDeg, MathF.Floor(Airframe.MaxClimbDeg / PitchDetentDeg) * PitchDetentDeg);
 
+    /// <summary>Moves up or down along the flight path for a tick, and reports touching the ground (the game decides
+    /// whether it was a crash landing or a wreck).</summary>
+    private void Climb()
+    {
+        Altitude += Speed * MathF.Sin(Gamma) * Dt * VerticalRateScale;
+        if (Altitude > 0f) return;
+        GroundHit = true;
+        ImpactSinkFpm = MathF.Max(0f, -VerticalSpeedFpm);
+        ImpactSpeedMph = Speed * Mph;
+        ImpactAngleDeg = MathHelper.ToDegrees(-Gamma);
+        Altitude = 0f;
+        Gamma = MathF.Max(Gamma, 0f);
+    }
+
+    /// <summary>One tick out of control (Failure): the controls do nothing but the throttle, and the aircraft falls its own way.
+    ///   NoseDive  - the airframe has broken: the nose goes over into a steep dive, it rolls and corkscrews, gathering speed.
+    ///   Spin      - a wing is gone: it rolls over and over toward the missing wing, nose well down, turning fast.
+    ///   DeadPilot - nobody flying: it holds its heading, the wings drift level, the nose sinks and it dives in.</summary>
+    private void StepOutOfControl()
+    {
+        Atmosphere(Altitude, out Rho, out SoundSpeed);
+        var turn = 0f;
+        switch (Failure)
+        {
+            case FlightFailure.NoseDive:
+                Gamma += (-0.95f - Gamma) * 0.02f;
+                Bank += (SpinDir * 1.2f - Bank) * 0.03f;
+                turn = SpinDir * 0.012f;
+                Speed = MathF.Min(380f / Mph, Speed + 0.2f / Mph);
+                break;
+            case FlightFailure.Spin:
+                Gamma += (-1.25f - Gamma) * 0.03f;
+                Bank = MathHelper.WrapAngle(Bank + SpinDir * 0.12f);
+                turn = SpinDir * 0.035f;
+                Speed += (230f / Mph - Speed) * 0.01f;
+                break;
+            case FlightFailure.DeadPilot:
+                Bank *= 0.995f;
+                if (Gamma > -MathHelper.PiOver2 * 0.9f) Gamma -= MathHelper.ToRadians(NoseDropDegS) * Dt;
+                // Gravity along the path, against a drag that holds it near cruise when level.
+                Speed = MathHelper.Clamp(Speed + (-G * MathF.Sin(Gamma) - (Speed - 270f / Mph) * 0.05f) * Dt, 80f / Mph, 480f / Mph);
+                break;
+        }
+        Heading = MathHelper.WrapAngle(Heading + turn);
+        PitchCmdDeg = MathHelper.ToDegrees(Gamma);
+        AccelStall = false;
+        LoadFactor = 1f;
+        YawRate = turn * 60f;
+        SlipBall = 0f;
+        Climb();
+    }
+
     public float StallSpeed(float n) =>
         MathF.Sqrt(2f * n * Airframe.WeightLb / (Rho * Airframe.WingArea * Airframe.CLmax));
 
@@ -155,6 +221,7 @@ public sealed class FlightModel
     public void Step(float bankResponse, Random rng)
     {
         Controls.Clamp();
+        if (Failure != FlightFailure.None) { StepOutOfControl(); return; }
         var pitchKey = Controls.Pitch;
         var targetBank = Controls.Roll * MaxBank;
         if (pitchKey == 0f) _keysBlocked = false;
@@ -184,7 +251,12 @@ public sealed class FlightModel
             if (SnapOnRelease) PitchCmdDeg = SnapPitch(MathHelper.ToDegrees(Gamma));
             _pitchHeld = false;
         }
-        Bank += (targetBank - Bank) * bankResponse;
+        // The ailerons roll to the bank asked for, as fast as what's left of them allows. A wing short of lift rolls the
+        // aircraft toward it: the bank settles off what was asked for, and if the ailerons can't hold it, it keeps going.
+        var bankTarget = MathHelper.Clamp(targetBank + RollBias * MaxBank, -MaxBank, MaxBank);
+        Bank += (bankTarget - Bank) * bankResponse * RollAuthority;
+        Bank += RollBias * DamageTuning.WingRollDriftRadS * (1f - RollAuthority) * Dt;
+        Bank = MathHelper.Clamp(Bank, -MathHelper.PiOver2, MathHelper.PiOver2);
 
         Atmosphere(Altitude, out Rho, out SoundSpeed);
         var v = MathF.Max(Speed, 20f);
@@ -193,7 +265,7 @@ public sealed class FlightModel
 
         // Wing capability: the most load factor (g) the wing can generate right now. Above about Mach 0.45 shock
         // stall (buffet) starts eating into maximum lift, so hard pulls at high speed stall the wing early.
-        var clMaxEff = Airframe.CLmax * (1f - MathHelper.Clamp((mach - 0.45f) / 0.2f, 0f, 0.6f));
+        var clMaxEff = Airframe.CLmax * (1f - MathHelper.Clamp((mach - 0.45f) / 0.2f, 0f, 0.6f)) * (1f - 0.5f * LiftLoss);
         var nWing = clMaxEff * q * Airframe.WingArea / Airframe.WeightLb;
 
         // Turn load. A hard mouse turn (full bank) pulls g, and elevator authority grows with dynamic
@@ -212,7 +284,7 @@ public sealed class FlightModel
         // Out of airspeed the wing and tail stop flying the nose: it drops through the horizon under its own weight
         // (a vertical climb that runs out of speed falls over rather than hanging there). 0 at stall speed, 1 at a standstill.
         var stallFrac = MathHelper.Clamp(1f - Speed / StallSpeed(1f), 0f, 1f);
-        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * 3f, -0.9f, 0.9f);
+        var rateWanted = MathHelper.Clamp((gammaTarget - Gamma) * 3f, -0.9f, 0.9f) * PitchAuthority;
         rateWanted *= MathHelper.Clamp(1f - (mach - 0.8f) / 0.1f, 0.2f, 1f);
         var nReq = MathF.Cos(Gamma) + rateWanted * v / G;
         var n = MathHelper.Clamp(nReq, -MathF.Min(Airframe.MaxNNeg, nWing), nAvail);
@@ -221,14 +293,15 @@ public sealed class FlightModel
             // The wheel points the nose: it eases to the command, whatever the wing could pull, quickly when the gap
             // is large and gently as it closes, and locks on it. (n above still sets the drag, so a hard swing costs speed.)
             var gap = gammaTarget - Gamma;
-            var slew = MathHelper.ToRadians(_pointSwing ? PointSlewDeg : WheelSlewDeg);
+            var slew = MathHelper.ToRadians(_pointSwing ? PointSlewDeg : WheelSlewDeg) * PitchAuthority;   // a damaged tail slows it
             var ease = _pointSwing ? PointEase : WheelEase;
             // Below stall speed the elevator loses its bite, so the wheel can't hold the nose up.
             var bite = 1f - stallFrac;
-            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap * bite : MathHelper.Clamp(gap * ease, -slew, slew) * bite;
+            Gamma += MathF.Abs(gap) < MathHelper.ToRadians(0.02f) ? gap * bite * PitchAuthority : MathHelper.Clamp(gap * ease, -slew, slew) * bite;
             if (MathF.Abs(gammaTarget - Gamma) > MathHelper.ToRadians(1f)) n = gammaTarget > Gamma ? nAvail : -MathF.Min(Airframe.MaxNNeg, nWing);
         }
         else Gamma += G * (n - MathF.Cos(Gamma)) / v * Dt;
+        if (NoseDropDegS > 0f && Gamma > -MathHelper.PiOver2 * 0.9f) Gamma -= MathHelper.ToRadians(NoseDropDegS) * Dt;
         if (stallFrac > 0f && Gamma > -MathHelper.PiOver2 * 0.9f)
             Gamma -= MathHelper.ToRadians(Airframe.StallNoseDropDegS) * stallFrac * Dt;
         Gamma = MathHelper.Clamp(Gamma, -MathHelper.PiOver2 * 0.995f, MathHelper.PiOver2 * 0.995f);
@@ -250,17 +323,7 @@ public sealed class FlightModel
         var thrust = MathF.Min(Airframe.StaticThrustCapLb * EnginePower, eta * Throttle * EnginePower * PowerHp(Altitude) * 550f / v);
 
         Speed = MathF.Max(0f, Speed + G * ((thrust - drag) / Airframe.WeightLb - MathF.Sin(Gamma)) * Dt);
-        Altitude += Speed * MathF.Sin(Gamma) * Dt * VerticalRateScale;
-        if (Altitude <= 0f)
-        {
-            // Report the touchdown; the game decides whether it was a crash landing or a wreck.
-            GroundHit = true;
-            ImpactSinkFpm = MathF.Max(0f, -VerticalSpeedFpm);
-            ImpactSpeedMph = Speed * Mph;
-            ImpactAngleDeg = MathHelper.ToDegrees(-Gamma);
-            Altitude = 0f;
-            Gamma = MathF.Max(Gamma, 0f);
-        }
+        Climb();
 
         // Arcade turning: tighter at low airspeed, softer as the wing runs out of lift.
         var controlEff = MathHelper.Clamp(nWing, 0.15f, 1f);
@@ -275,9 +338,9 @@ public sealed class FlightModel
             noise += ((float)rng.NextDouble() - 0.5f) * 0.05f * stallDepth;
             Bank += ((float)rng.NextDouble() - 0.5f) * 0.08f * stallDepth; // wing drops as it lets go
         }
-        var turnPart = Bank * TurnCoeff * controlEff * turnSpeedFactor * turnScale;
+        var turnPart = Bank * TurnCoeff * controlEff * turnSpeedFactor * turnScale * TurnAuthority;
         // Rudder: a flat swing of the nose, stronger with airflow over the tail.
-        var rudderPart = Controls.Yaw * Airframe.RudderRate * controlEff;
+        var rudderPart = Controls.Yaw * Airframe.RudderRate * controlEff * YawAuthority;
         Heading = MathHelper.WrapAngle(Heading + noise + turnPart + rudderPart);
 
         // Instrument feeds: turn rate (rad/s), and the slip ball. In this turn model bank and turn rate

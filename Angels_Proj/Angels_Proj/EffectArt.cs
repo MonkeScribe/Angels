@@ -11,13 +11,14 @@ namespace Angels_Proj;
 /// the aircraft, and the smoke is puffs left in the air behind it (see Fx).
 ///
 /// Loaded from Content/Sprites/fx: fire_0.png, fire_1.png ... (the animation's frames, flame rising toward the top of
-/// the image with its base low in the middle) and smoke_0.png, smoke_1.png ... (puffs). Any that are missing are made
-/// in code instead, so the game runs without them.
+/// the image with its base low in the middle), smoke_0.png, smoke_1.png ... (puffs) and explosion_0.png ... (a fireball
+/// from first flash to last smoke, centred). Any that are missing are made in code instead, so the game runs without them.
 /// </summary>
 public sealed class EffectArt
 {
     public readonly Texture2D[] Fire;
     public readonly Texture2D[] Smoke;
+    public readonly Texture2D[] Explosion;   // played once, first frame to last, over an explosion's life
     public readonly Texture2D Mist;     // pale round puff for leaking fuel (made in code)
 
     public const float FireFps = 14f;
@@ -32,6 +33,8 @@ public sealed class EffectArt
         Fire = fire.Length > 0 ? fire : MakeFire(gd);
         var smoke = LoadSeq(gd, "Content/Sprites/fx/smoke_");
         Smoke = smoke.Length > 0 ? smoke : MakeSmoke(gd);
+        var boom = LoadSeq(gd, "Content/Sprites/fx/explosion_");
+        Explosion = boom.Length > 0 ? boom : MakeExplosion(gd);
         Mist = Bake(gd, 16, 16, (x, y) =>
         {
             var d = MathF.Sqrt((x - 7.5f) * (x - 7.5f) + (y - 7.5f) * (y - 7.5f)) / 7.5f;
@@ -99,6 +102,50 @@ public sealed class EffectArt
                 var c = heat > 0.55f ? new Color(255, 248, 210) : heat > 0.35f ? new Color(255, 214, 80)
                       : heat > 0.18f ? new Color(255, 140, 30) : new Color(220, 50, 20);
                 return c;
+            });
+        }
+        return frames;
+    }
+
+    /// <summary>The explosion frame for how far through it is (0-1).</summary>
+    public Texture2D ExplosionFrame(float age) => Explosion[Math.Clamp((int)(age * Explosion.Length), 0, Explosion.Length - 1)];
+
+    /// <summary>Stand-in explosion: a lumpy fireball that swells from a white-hot flash through yellow and orange to a
+    /// thinning ring of dark smoke.</summary>
+    private static Texture2D[] MakeExplosion(GraphicsDevice gd)
+    {
+        const int S = 64, N = 10;
+        var rng = new Random(77);
+        var blobs = new (float x, float y, float r)[9];
+        for (var i = 0; i < blobs.Length; i++)
+        {
+            var a = i * MathF.Tau / blobs.Length + (float)rng.NextDouble() * 0.5f;
+            var d = i == 0 ? 0f : 0.3f + (float)rng.NextDouble() * 0.2f;
+            blobs[i] = (MathF.Cos(a) * d, MathF.Sin(a) * d, i == 0 ? 0.55f : 0.35f + (float)rng.NextDouble() * 0.15f);
+        }
+        var frames = new Texture2D[N];
+        for (var n = 0; n < N; n++)
+        {
+            var t = n / (N - 1f);                                   // 0 flash .. 1 last of the smoke
+            var grow = 0.35f + 0.65f * MathF.Sqrt(t);               // the ball swells fast, then slows
+            var hot = 1f - t;                                       // how much is still burning
+            frames[n] = Bake(gd, S, S, (x, y) =>
+            {
+                float u = (x + 0.5f - S / 2f) / (S / 2f), v = (y + 0.5f - S / 2f) / (S / 2f);
+                var inside = 0f;
+                foreach (var (bx, by, br) in blobs)
+                {
+                    float dx = u - bx * grow, dy = v - by * grow, r = br * grow;
+                    inside = MathF.Max(inside, 1f - MathF.Sqrt(dx * dx + dy * dy) / r);
+                }
+                if (inside <= 0f) return Color.Transparent;
+                // Hot in the middle of the ball, cooling to smoke at its edge; the hot part shrinks as it burns out.
+                var heat = inside * 1.6f * hot - 0.15f * t;
+                var a = MathHelper.Clamp(1.2f - t * 0.9f, 0f, 1f);
+                Color c = heat > 0.85f ? new Color(255, 250, 225) : heat > 0.6f ? new Color(255, 220, 90)
+                        : heat > 0.38f ? new Color(255, 150, 40) : heat > 0.18f ? new Color(210, 70, 25)
+                        : new Color(60, 52, 50);
+                return new Color((int)(c.R * a), (int)(c.G * a), (int)(c.B * a), (int)(255 * a));
             });
         }
         return frames;

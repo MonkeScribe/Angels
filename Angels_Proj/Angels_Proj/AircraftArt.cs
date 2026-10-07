@@ -42,7 +42,7 @@ public sealed class AircraftArt
     }
 
     /// <summary>The aircraft at pos (screen), scale screen px per sphere px, faded by alpha: its propellers behind the
-    /// airframe when the nose points away from us and in front of it otherwise, then any engine fire.</summary>
+    /// airframe when the nose points away from us and in front of it otherwise, then a fire on each burning part.</summary>
     public void Draw(SpriteBatch sb, Aircraft a, SpriteSphere.View view, Vector2 pos, float scale, float alpha, float time)
     {
         World.Basis(a.Heading, a.Pitch, a.Bank, out _, out _, out var f);
@@ -51,8 +51,13 @@ public sealed class AircraftArt
         var flip = view.Flip ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
         sb.Draw(a.Sphere.Sheet, pos, view.Src, Color.White * alpha, view.Roll, new Vector2(SpriteSphere.Frame / 2f), scale, flip, 0f);
         if (!propsBehind) foreach (var p in a.Propellers) DrawPropeller(sb, p, view, pos, scale, alpha);
-        if (a.OnFire)
-            foreach (var at in a.FirePoints) DrawFire(sb, at, view, pos, scale, a.FireStrength * alpha, a.Salt, time);
+        foreach (var part in a.Parts)
+        {
+            if (!part.OnFire) continue;
+            var strength = a.FireStrengthOf(part) * alpha;
+            if (part == a.Engine) foreach (var at in a.FirePoints) DrawFire(sb, at, view, pos, scale, strength, a.Salt, time);
+            else DrawFire(sb, Aircraft.LocalToSphere(part.Centre), view, pos, scale, strength, a.Salt + 1 + (int)part.Kind, time);
+        }
     }
 
     /// <summary>A propeller: its disc placed in the aircraft's own frame and seen from wherever the picture is taken, so it
@@ -109,7 +114,7 @@ public sealed class AircraftArt
         }
     }
 
-    /// <summary>An engine fire: the animation drawn at a fire point, turned so the flames stream back along the aircraft
+    /// <summary>A fire: the animation drawn at a fire point, turned so the flames stream back along the aircraft
     /// (shorter as it points toward or away from us) and longer the fiercer the fire.</summary>
     private void DrawFire(SpriteBatch sb, Vector3 point, SpriteSphere.View view, Vector2 pos, float scale, float strength, int salt, float time)
     {
