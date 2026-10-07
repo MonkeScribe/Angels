@@ -192,10 +192,10 @@ public static class DamageModel
 
     public static string Name(PartState s) => s switch
     {
-        PartState.Undamaged => "OK",
-        PartState.Slight => "SLIGHT",
-        PartState.Moderate => "MODERATE",
-        PartState.Critical => "CRITICAL",
+        PartState.Undamaged => "GREEN",
+        PartState.Slight => "YELLOW",
+        PartState.Moderate => "ORANGE",
+        PartState.Critical => "RED",
         PartState.Black => "BLACK",
         _ => "GONE",
     };

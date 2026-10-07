@@ -449,10 +449,10 @@ public sealed class Gunsight
             var haloHalf = MathF.Min(2.5f * px, 0.9f);
             Ribbon(0f, haloHalf, haloHalf * 0.35f, Glow(new Vector3(1f, 0.55f, 0.42f), 0.6f * g, 0.12f * g), Glow(new Vector3(1f, 0.35f, 0.25f), 0f, 0f));
             // Core: about two pixels wide, white-hot (faintly warm) at the head, pink-red where it trails.
-            var coreHalf = MathF.Min(1.0f * px, 0.3f);
+            var coreHalf = MathF.Min(2.0f * px, 0.3f);
             Ribbon(0f, coreHalf, coreHalf * 0.4f, Glow(new Vector3(1f, 0.97f, 0.9f), g, 0.75f * g), Glow(new Vector3(1f, 0.45f, 0.35f), 0.65f * g, 0.35f * g));
             // Head flare: the burning base of the round, the brightest point, over the last third of the streak.
-            var flareHalf = MathF.Min(1.6f * px, 0.5f);
+            var flareHalf = MathF.Min(3.0f * px, 0.5f);
             Ribbon(0.65f, flareHalf, flareHalf * 0.5f, Glow(Vector3.One, g, 0.5f * g), Glow(new Vector3(1f, 0.85f, 0.7f), 0.4f * g, 0.15f * g));
         }
     }
