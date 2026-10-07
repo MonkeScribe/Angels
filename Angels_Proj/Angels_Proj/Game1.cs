@@ -879,11 +879,34 @@ public class Game1 : Game
         else if (_mouseAim)
         {
             // The sight has lost its target and starts to fade: a hard window. For a whole second the plane keeps the
-            // trajectory it was on (wings level on this heading, the nose where it is) with the pointer still hidden and
-            // nothing to be picked; then the pointer pops up on that trajectory (see the steering below).
+            // trajectory it was on (wings level on this heading, the nose where it is) unless the mouse moves it, with the
+            // pointer still hidden and nothing to be picked; then the pointer pops up on that trajectory (see the steering
+            // below).
             _mouseAim = false;
             _exitHeading = _fm.Heading;
             _exitHold = ExitKeepTicks + ExitLandTicks;
+        }
+        else if (_exitHold > ExitLandTicks && IsActive)
+        {
+            // In that window the mouse still flies the plane the way it does while aiming: only its movement counts, left
+            // and right swinging the heading being held, up and down the nose (the pointer stays hidden, recentred near an
+            // edge as in aim).
+            var now = new Point(m.X, m.Y);
+            if (_aimSkip > 0) _aimSkip--;
+            else
+            {
+                float dx = MathHelper.Clamp(now.X - _aimPrev.X, -AimMaxStepPx, AimMaxStepPx);
+                float dy = MathHelper.Clamp(now.Y - _aimPrev.Y, -AimMaxStepPx, AimMaxStepPx);
+                var k = AimMouseDegPerPx / Scale;
+                _exitHeading = MathHelper.WrapAngle(_exitHeading + MathHelper.ToRadians(dx * k));
+                _fm.WheelPitch(-dy * k);
+            }
+            _aimPrev = now;
+            if (now.X < vp.Width / 5 || now.X > vp.Width * 4 / 5 || now.Y < vp.Height / 5 || now.Y > vp.Height * 4 / 5)
+            {
+                Mouse.SetPosition(vp.Width / 2, vp.Height / 2);
+                _aimSkip = AimWarpSkipTicks;
+            }
         }
         _sightAlpha = MathHelper.Clamp(_sightAlpha + (target ? 0.06f : -0.025f), 0f, 1f);
 
