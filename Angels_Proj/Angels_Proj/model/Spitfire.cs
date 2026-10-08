@@ -12,7 +12,35 @@ namespace Angels_Proj;
 public sealed class Spitfire : Aircraft
 {
     public Spitfire(Pilot pilot)
-        : base(MakeAirframe(), HitBoxes, Armor, Integrity, DamageMultiplier, Look, pilot) { }
+        : base(MakeAirframe(), HitBoxes, Armor, Integrity, DamageMultiplier, Look, MakeGuns(), pilot) { }
+
+    // ---- Guns ----
+
+    /// <summary>Where each gun's round leaves the airframe, as a pixel of the level sprite (256 px, nose up): the tips of the
+    /// barrel stubs on its wings. There are four stubs, two a wing, and each serves two of the eight guns (guns 0-3 are the
+    /// left wing, 4-7 the right).</summary>
+    private static readonly Vector2[] MuzzleSpritePx =
+    {
+        new(85.5f, 89f), new(85.5f, 89f), new(89.5f, 79f), new(89.5f, 79f),     // left wing: outer stub, then inner stub
+        new(166.5f, 79f), new(166.5f, 79f), new(171f, 89f), new(171f, 89f),     // right wing: inner stub, then outer stub
+    };
+
+    private const float SpritePxPerFt = 204f / 37.2f;     // the sprite's wingspan in px over the real span in feet
+    private const float ConvergeFt = 750f;                 // 250 yd harmonisation
+
+    /// <summary>The "A" wing: eight .303 Browning Mk IIs, four in each wing, harmonised to converge ahead of the nose. Muzzles
+    /// are in the aircraft frame (feet: x along the right wing, y up, z forward), from the sprite points above (the sprite's
+    /// origin, 128,133, is the aircraft's origin), a little below the wing chord line. Each Spitfire gets its own guns.</summary>
+    public static Gun[] MakeGuns()
+    {
+        var guns = new Gun[MuzzleSpritePx.Length];
+        for (var g = 0; g < guns.Length; g++)
+        {
+            var muzzle = new Vector3((MuzzleSpritePx[g].X - 128f) / SpritePxPerFt, -1f, (133f - MuzzleSpritePx[g].Y) / SpritePxPerFt);
+            guns[g] = new Gun(GunSpec.Browning303, muzzle, ConvergeFt);
+        }
+        return guns;
+    }
 
     /// <summary>A fresh Spitfire airframe (each aircraft gets its own, so one can be changed without the others).</summary>
     public static Airframe MakeAirframe() => new()

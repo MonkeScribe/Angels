@@ -50,7 +50,7 @@ public class Game1 : Game
     private static readonly float AimYawTrimMax = MathF.PI; // free: once the assist lets go the player can follow the target anywhere
     private const bool InvertWheel = true;       // true: scroll back (towards you) pulls the nose up
 
-    // Guns: eight .303 Brownings firing real rounds; see Guns.cs.
+    // Guns: each aircraft carries its own (Aircraft.Guns); its pilot fires them into World.Projectiles.
 
     private const string SecretCode = "ANGEL";
 
@@ -75,7 +75,6 @@ public class Game1 : Game
     private Gunsight _gunsight;
     private RenderTarget2D _world;              // the ground layer, faded into the sky as we climb out of the view box
     private readonly System.Collections.Generic.List<Gunsight.Tracer> _tracers = new();
-    private readonly Guns _guns;
     private int _assistTicks;                    // ticks left of the assist flying onto the target
     private float _aimBaseBearing;               // rad: where the assist pointed the heading, held once it lets go
     private Vector2 _pan;                       // camera pan, screen px: the plane sits this far from the screen centre the other way
@@ -157,7 +156,6 @@ public class Game1 : Game
     public Game1()
     {
         _worldModel.SpawnPlayer(_pilot, Vector2.Zero, false);
-        _guns = new Guns(_rng);
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
@@ -224,7 +222,7 @@ public class Game1 : Game
         _phase = Phase.Flying;
         _particles.Clear();
         _pan = Vector2.Zero;
-        _guns.Rearm();
+        _worldModel.Projectiles.Clear();
         _reason = "";
         _phaseTime = 0f;
     }
@@ -333,22 +331,18 @@ public class Game1 : Game
     private void Fire()
     {
         _firing = true;
-        World.Basis(_fm.Heading, _fm.Gamma, _fm.Bank, out var r, out var u, out var f);
-        var gs = _fm.GroundSpeed;
-        var vel = new Vector3(MathF.Sin(_fm.Heading) * gs, _fm.Speed * MathF.Sin(_fm.Gamma) * _fm.VerticalRateScale, -MathF.Cos(_fm.Heading) * gs);
         // Where each muzzle is on the map, from the picture as it is drawn (bigger than life), so the round starts at the
         // barrel tip on screen: the muzzle in the sphere's frame (x nose, y left, z up; its centre is a little ahead of
         // the plane's origin and above the nose's axis), put where the picture shows it.
         var kws = 0.8f * (0.85f + 0.3f * MathF.Sqrt(MathHelper.Clamp(_fm.Altitude / _fm.Airframe.CeilingFt, 0f, 1f)))
                   * Player.Sphere.MapScale / GroundZoom;                                 // world px per px of the sphere's picture
         var view = AircraftArt.MapView(Player);
-        var mapMuzzles = new Vector2[Guns.GunCount];
-        for (var g = 0; g < Guns.GunCount; g++)
+        _pilot.MapMuzzleOf = gun =>
         {
-            var m = Guns.Muzzles[g];
-            mapMuzzles[g] = _pos + view.Project(new Vector3(m.Z, -m.X, m.Y) + Player.Sphere.MuzzleShift) * kws;
-        }
-        _guns.Fire(World.ToFt(_pos, _fm.Altitude), r, u, f, vel, mapMuzzles);
+            var m = gun.Muzzle;
+            return _pos + view.Project(new Vector3(m.Z, -m.X, m.Y) + Player.Sphere.MuzzleShift) * kws;
+        };
+        _pilot.Fire(Player, _worldModel, _rng);
     }
 
     /// <summary>Gun test: clears the sky and puts a Spitfire still in the air ahead, hit boxes on, and holds the player
@@ -360,7 +354,7 @@ public class Game1 : Game
         target.Frozen = true;
         target.Flight.Speed = 0f;
         _testEl = 0.17f;               // a little above
-        _testRange = Guns.ConvergeFt;
+        _testRange = Player.Guns[0].ConvergeFt;
         _showHitboxes = true;
     }
 
@@ -462,8 +456,8 @@ public class Game1 : Game
         if (_showHitboxes) foreach (var p in _worldModel.Others) World.HitBoxEdges(p, _boxEdges);
         _gunsight.DebugLines.Clear();
         foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.color));
-        _guns.Update(_worldModel, Player, _fx);
-        _guns.Tracers(_tracers);
+        _worldModel.UpdateProjectiles(_fx, _rng);
+        _worldModel.Tracers(_tracers);
         _firing = false;
         _tracked = _testTarget;
         _hovered = null;
@@ -748,8 +742,8 @@ public class Game1 : Game
         if (_showHitboxes) foreach (var p in _worldModel.Others) World.HitBoxEdges(p, _boxEdges);
         _gunsight.DebugLines.Clear();
         foreach (var e in _boxEdges) _gunsight.DebugLines.Add((e.a, e.b, e.color));
-        _guns.Update(_worldModel, Player, _fx);
-        _guns.Tracers(_tracers);
+        _worldModel.UpdateProjectiles(_fx, _rng);
+        _worldModel.Tracers(_tracers);
         _firing = false;
 
         // The aimer comes up when the mouse is over a plane on the map that is also inside the gunsight's view.
@@ -1152,12 +1146,12 @@ public class Game1 : Game
         // Tracers on the map: tiny burning dashes flying along the round's path, white-hot at the head and red behind,
         // with a faint red glow. Like the real thing they light a little way down the range and die away at the end.
         // They start at the drawn muzzle and are placed and scaled by their height like everything else.
-        if (Guns.ShowMapTracers)
+        if (Projectile.ShowMapTracers)
         {
             var tw = Math.Max(1, (int)MathF.Round(s));
-            foreach (var rd in _guns.Rounds)
+            foreach (var rd in _worldModel.Projectiles)
             {
-                var glow = Guns.TracerGlow(rd.Age);
+                var glow = Projectile.TracerGlow(rd.Age);
                 if (!rd.Tracer || glow < 0.02f) continue;
                 var zt = s * GroundZoom / MathF.Max(DistFactor(rd.Pos.Y), 0.2f);
                 var wp = new Vector2(rd.Pos.X, rd.Pos.Z) * World.PxPerFoot + rd.MapOffset;
@@ -1169,9 +1163,10 @@ public class Game1 : Game
                 // Drawn back from the head: faint glow, red tail, brighter red, white-hot head.
                 void Dash(float from, float len, float width, Color c) =>
                     _sb.Draw(_pixel, sp - vd * from * tw, null, c, ang, new Vector2(1f, 0.5f), new Vector2(len * tw, width * tw), SpriteEffects.None, 0f);
-                Dash(-1f, 9f, 3f, new Color(255, 120, 90) * (0.3f * glow));   // daylight glare: washed-out pinkish orange
-                Dash(3f, 5f, 1f, new Color(255, 70, 50) * (0.75f * glow));     // red tail
-                Dash(0f, 4f, 1f, new Color(255, 200, 175) * glow);             // hot pink-white
+                var tracerCol = rd.TracerColor;
+                Dash(-1f, 9f, 3f, Color.Lerp(tracerCol, Color.White, 0.3f) * (0.3f * glow));   // daylight glare: the colour washed out toward white
+                Dash(3f, 5f, 1f, tracerCol * (0.75f * glow));                                    // coloured tail
+                Dash(0f, 4f, 1f, Color.Lerp(tracerCol, Color.White, 0.75f) * glow);              // hot, near white
                 Dash(-1f, 3f, 1f, new Color(255, 255, 250) * glow);            // white-hot head
                 Dash(-1f, 2f, 2f, new Color(255, 250, 240) * (0.5f * glow));   // and its flare
             }
@@ -1219,10 +1214,10 @@ public class Game1 : Game
 
         // Tracers on the map: tiny pure red dashes, 1 px wide and 4 long, flying along the round's path, starting at
         // the drawn muzzle and placed and scaled by their height like everything else.
-        if (Guns.ShowMapTracers)
+        if (Projectile.ShowMapTracers)
         {
             var tw = Math.Max(1, (int)MathF.Round(s));
-            foreach (var rd in _guns.Rounds)
+            foreach (var rd in _worldModel.Projectiles)
             {
                 if (!rd.Tracer) continue;
                 var zt = s * GroundZoom / MathF.Max(DistFactor(rd.Pos.Y), 0.2f);
@@ -1231,7 +1226,7 @@ public class Game1 : Game
                 var vd = new Vector2(rd.Vel.X, rd.Vel.Z);
                 if (vd.LengthSquared() < 1e-3f) continue;
                 vd.Normalize();
-                _sb.Draw(_pixel, sp, null, new Color(255, 0, 0), MathF.Atan2(vd.Y, vd.X), new Vector2(0.5f, 0.5f),
+                _sb.Draw(_pixel, sp, null, rd.TracerColor, MathF.Atan2(vd.Y, vd.X), new Vector2(0.5f, 0.5f),
                     new Vector2(4f * tw, tw), SpriteEffects.None, 0f);
             }
         }
@@ -1530,7 +1525,7 @@ public class Game1 : Game
             $"SIGHT CLOUDS {_gunsight.CloudsDrawn}  FILL {_gunsight.CloudFill:0.0}" + (_gunsight.Blur ? "  BLUR" : ""),
             $"SIGHT SMOKE {_gunsight.SmokeDrawn}/{_gunsight.SmokeSeen}  FILL {_gunsight.SmokeFill:0.0}",
             $"SIGHT DRAW CALLS {_gunsight.SpriteRuns} PER SLAB",
-            $"PARTICLES {_fx.Particles.Count}  ROUNDS {_guns.Rounds.Count}  AIRCRAFT {_worldModel.Planes.Count}",
+            $"PARTICLES {_fx.Particles.Count}  ROUNDS {_worldModel.Projectiles.Count}  AIRCRAFT {_worldModel.Planes.Count}",
         };
         if (_test is TestMode.FollowThroughCloud or TestMode.CloudIntoView)
             lines.Add($"CLOUD {Vector3.Distance(World.ToFt(_pos, _fm.Altitude), _testCloudFt):0} FT AWAY");
@@ -1567,8 +1562,8 @@ public class Game1 : Game
         // "HUD BARS" in the debug menu adds the old digital bars back.
         var line = 0;
         Row(line++, "THROTTLE", $"{_fm.Throttle * 100f:0}%", _fm.Throttle, new Color(94, 224, 160));
-        var ammo = _guns.AmmoLeft;
-        Row(line++, "AMMO", $"{ammo}", ammo / (float)(Guns.GunCount * Guns.RoundsPerGun), new Color(255, 190, 70));
+        var ammo = Player.AmmoLeft;
+        Row(line++, "AMMO", $"{ammo}", ammo / (float)Player.AmmoCapacity, new Color(255, 190, 70));
         // Engine: hit points are the power available, in the colour of its damage band (black drawn as dark grey here).
         var eng = _dmg.EngineHp / DamageTuning.MaxHp;
         var engCol = _dmg.EngineState == PartState.Black ? new Color(90, 90, 90) : DamageModel.StateColor(_dmg.EngineState);

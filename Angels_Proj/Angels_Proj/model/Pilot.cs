@@ -4,11 +4,49 @@ using Microsoft.Xna.Framework.Input;
 
 namespace Angels_Proj;
 
-/// <summary>Whoever flies an aircraft: each tick it sets the aircraft's control inputs (throttle, pitch, roll, yaw) and
-/// nothing else. The player and every AI are pilots.</summary>
+/// <summary>Whoever flies an aircraft: each tick it sets the aircraft's control inputs (throttle, pitch, roll, yaw), and
+/// when it pulls the trigger (Fire) its aircraft's guns put projectiles into the world. The player and every AI are pilots.</summary>
 public abstract class Pilot
 {
     public abstract void Fly(Aircraft plane);
+
+    /// <summary>One tick with the trigger held: every gun on the aircraft cycles its share of rounds, and each round becomes a
+    /// projectile at that gun's muzzle, leaving at the gun's muzzle velocity plus the aircraft's own velocity.</summary>
+    public void Fire(Aircraft plane, World world, Random rng)
+    {
+        if (plane.PilotKilled) return;
+        var pos = plane.PositionFt;
+        World.Basis(plane.Heading, plane.Pitch, plane.Bank, out var right, out var up, out var fwd);
+        var flight = plane.Flight;
+        var gs = flight.GroundSpeed;
+        var planeVel = new Vector3(MathF.Sin(flight.Heading) * gs, flight.Speed * MathF.Sin(flight.Gamma) * flight.VerticalRateScale,
+            -MathF.Cos(flight.Heading) * gs);
+        foreach (var gun in plane.Guns)
+        {
+            var perTick = gun.RoundsPerTick;
+            var aim = gun.AimPoint(pos, up, fwd);
+            gun.Phase += perTick;
+            while (gun.Phase >= 1f && gun.Ammo > 0)
+            {
+                gun.Phase -= 1f;
+                gun.Ammo--;
+                var m = gun.Muzzle;
+                var muzzle = pos + right * m.X + up * m.Y + fwd * m.Z;
+                var dir = Vector3.Normalize(aim - muzzle);
+                dir = Vector3.Normalize(dir + right * gun.Spread(rng) + up * gun.Spread(rng));
+                // Rounds fired within the same tick are spread along it, so a burst doesn't clump into tick steps.
+                var lead = gun.Phase / perTick / 60f;
+                var vel = dir * gun.Spec.MuzzleVelocityFtS + planeVel;
+                var mapOffset = MapMuzzle(plane, gun) is { } onMap ? onMap - new Vector2(muzzle.X, muzzle.Z) * World.PxPerFoot : Vector2.Zero;
+                world.Projectiles.Add(new Projectile(gun, gun.NextIsTracer(), plane, muzzle + vel * lead, vel, lead, mapOffset));
+            }
+            if (gun.Ammo == 0) gun.Phase = 0f;
+        }
+    }
+
+    /// <summary>Where a gun's muzzle is drawn on the 2D map (world px), if the map draws the aircraft big enough for that to
+    /// differ from where the muzzle really is; null to use the real place.</summary>
+    protected virtual Vector2? MapMuzzle(Aircraft plane, Gun gun) => null;
 }
 
 /// <summary>
@@ -30,10 +68,16 @@ public sealed class PlayerPilot : Pilot
         RudderKey = (kb.IsKeyDown(Keys.D) ? 1f : 0f) - (kb.IsKeyDown(Keys.A) ? 1f : 0f);
     }
 
+    /// <summary>Set by the game: where a gun's muzzle is drawn on the map, since the player's aircraft is drawn bigger than life
+    /// and its rounds should start at the barrel tips as they look on screen.</summary>
+    public Func<Gun, Vector2> MapMuzzleOf;
+
+    protected override Vector2? MapMuzzle(Aircraft plane, Gun gun) => MapMuzzleOf?.Invoke(gun);
+
     public override void Fly(Aircraft plane)
     {
         var c = plane.Controls;
-        c.Throttle += ThrottleKey * ThrottleRate;
+        c.Throttle +=ThrottleKey * ThrottleRate;
         c.Pitch = PitchKey;
         c.Roll = Bank;
         c.Yaw = RudderKey;

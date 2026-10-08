@@ -47,6 +47,15 @@ public abstract class Aircraft
     /// it is drawn and shared by every aircraft of the type.</summary>
     public SpriteSphere Sphere => _sphere ??= SpriteSphere.For(_sheet);
 
+    // ---------------------------------------------------------------- guns
+
+    /// <summary>Its guns: each is what kind of gun it is, where its rounds leave the airframe and how much ammunition it has
+    /// left. The pilot fires them (Pilot.Fire).</summary>
+    public readonly Gun[] Guns;
+
+    public int AmmoLeft { get { var n = 0; foreach (var g in Guns) n += g.Ammo; return n; } }
+    public int AmmoCapacity { get { var n = 0; foreach (var g in Guns) n += g.Spec.MagazineRounds; return n; } }
+
     // ---------------------------------------------------------------- fuel, leaks, fire
 
     public float FuelGal;
@@ -115,9 +124,11 @@ public abstract class Aircraft
     /// <param name="hitBoxes">Its hit boxes, each tagged with its part.</param>
     /// <param name="armor">Each part's armour, integrity and damage multiplier, in Part order.</param>
     /// <param name="look">Its sprite sheet, and where its propellers and engine fires are drawn.</param>
+    /// <param name="guns">Its guns, each with its own muzzle position (fresh ones for this aircraft: they hold its ammunition).</param>
     protected Aircraft(Airframe airframe, DamageTuning.HitBox[] hitBoxes, float[] armor, float[] integrity, float[] damageMultiplier,
-        AircraftLook look, Pilot pilot)
+        AircraftLook look, Gun[] guns, Pilot pilot)
     {
+        Guns = guns;
         _sheet = look.Sheet;
         Propellers = new Propeller[look.Propellers.Length];
         for (var i = 0; i < Propellers.Length; i++) Propellers[i] = new Propeller(look.Propellers[i]);

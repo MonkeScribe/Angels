@@ -36,6 +36,26 @@ public sealed class World
     /// <summary>Rounds that have hit something.</summary>
     public int Hits { get; private set; }
 
+    /// <summary>Every projectile in flight, whoever fired it.</summary>
+    public readonly List<Projectile> Projectiles = new();
+    private readonly List<RayEntry> _projectileHits = new();
+
+    /// <summary>Every projectile flies a tick and resolves its hits; spent ones are dropped.</summary>
+    public void UpdateProjectiles(Fx fx, Random rng)
+    {
+        for (var i = Projectiles.Count - 1; i >= 0; i--)
+            if (!Projectiles[i].Update(this, fx, rng, _projectileHits)) Projectiles.RemoveAt(i);
+    }
+
+    /// <summary>The glowing streak of each tracer in flight, for the gunsight.</summary>
+    public void Tracers(List<Gunsight.Tracer> into)
+    {
+        into.Clear();
+        if (!Projectile.ShowEffects && !Projectile.ShowSightTracers) return;
+        foreach (var p in Projectiles)
+            if (p.TryGetStreak(out var streak)) into.Add(streak);
+    }
+
     public void Add(Aircraft a) { Planes.Add(a); Refresh(); }
     public void Remove(Aircraft a) { Planes.Remove(a); Refresh(); }
 

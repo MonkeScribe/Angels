@@ -15,7 +15,7 @@ namespace Angels_Proj;
 /// </summary>
 public sealed class Gunsight
 {
-    public struct Tracer { public Vector3 A, B; public int Life; public float Glow; }
+    public struct Tracer { public Vector3 A, B; public int Life; public float Glow; public Vector3 Tint; }
 
     private const float HFovDeg = 18f, SkyRadius = 900_000f; // square view, so 18 degrees each way: the reticle's worth
     private const float GroundRadius = 600_000f;             // the ground disc: well inside the sky dome, out to the horizon
@@ -584,13 +584,16 @@ public sealed class Gunsight
             // Glare: in daylight a red tracer reads as a washed-out pinkish orange haze round a near-white core.
             // About five pixels across at the head (no more than a couple of feet), tapering to the tail.
             var haloHalf = MathF.Min(2.5f * px, 0.9f);
-            Ribbon(0f, haloHalf, haloHalf * 0.35f, Glow(new Vector3(1f, 0.55f, 0.42f), 0.6f * g, 0.12f * g), Glow(new Vector3(1f, 0.35f, 0.25f), 0f, 0f));
-            // Core: about two pixels wide, white-hot (faintly warm) at the head, pink-red where it trails.
+            // (The tracer's own colour, washed toward white by the daylight: red gives the pinkish orange.)
+            var tint = tr.Tint;
+            Vector3 Wash(float toWhite) => Vector3.Lerp(tint, Vector3.One, toWhite);
+            Ribbon(0f, haloHalf, haloHalf * 0.35f, Glow(Wash(0.3f), 0.6f * g, 0.12f * g), Glow(tint, 0f, 0f));
+            // Core: about two pixels wide, white-hot (faintly warm) at the head, tinted where it trails.
             var coreHalf = MathF.Min(2.0f * px, 0.3f);
-            Ribbon(0f, coreHalf, coreHalf * 0.4f, Glow(new Vector3(1f, 0.97f, 0.9f), g, 0.75f * g), Glow(new Vector3(1f, 0.45f, 0.35f), 0.65f * g, 0.35f * g));
+            Ribbon(0f, coreHalf, coreHalf * 0.4f, Glow(new Vector3(1f, 0.97f, 0.9f), g, 0.75f * g), Glow(Wash(0.2f), 0.65f * g, 0.35f * g));
             // Head flare: the burning base of the round, the brightest point, over the last third of the streak.
             var flareHalf = MathF.Min(3.0f * px, 0.5f);
-            Ribbon(0.65f, flareHalf, flareHalf * 0.5f, Glow(Vector3.One, g, 0.5f * g), Glow(new Vector3(1f, 0.85f, 0.7f), 0.4f * g, 0.15f * g));
+            Ribbon(0.65f, flareHalf, flareHalf * 0.5f, Glow(Vector3.One, g, 0.5f * g), Glow(Wash(0.7f), 0.4f * g, 0.15f * g));
         }
     }
 
