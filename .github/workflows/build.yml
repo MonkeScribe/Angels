@@ -1,0 +1,22 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore MonoGame content tools
+        working-directory: Angels_Proj/Angels_Proj
+        run: dotnet tool restore
+
+      - name: Build
+        run: dotnet build Angels_Proj/Angels_Proj/Angels_Proj.csproj --configuration Release
