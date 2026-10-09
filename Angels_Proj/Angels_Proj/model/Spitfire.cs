@@ -6,8 +6,8 @@ namespace Angels_Proj;
 /// The Supermarine Spitfire: an Aircraft with everything that makes it one. Its airframe and limits are calibrated
 /// against the real aircraft (Mk IX performance: level speed ~403 mph TAS at ~30,000 ft, ~4,100 ft/min climb at sea
 /// level falling to 0 at 51,550 ft, stall ~86 mph, never-exceed 450 mph IAS, dive to ~Mach 0.87 from altitude), with
-/// the Mk I's 85 gallons of fuel; its hit boxes are laid out on its 30 ft length and 37 ft span; and each part has its
-/// armour, integrity and damage multiplier. Tweak a Spitfire here.
+/// the Mk IX's 85 gallons of fuel and its Merlin 60-series fuel burn; its hit boxes are laid out on its 30 ft length
+/// and 37 ft span; and each part has its armour, integrity and damage multiplier. Tweak a Spitfire here.
 /// </summary>
 public sealed class Spitfire : Aircraft
 {
@@ -59,8 +59,17 @@ public sealed class Spitfire : Aircraft
             (28000, 1231), (30000, 1180), (35000, 1036), (40000, 843), (43000, 767), (47000, 780),
             (51550, 840), (56000, 600), (65000, 150),
         },
-        FuelCapacityGal = 85f,                                       // Mk I: 48 + 37 imperial gallons
-        FuelBurnIdleGalPerMin = 0.3f, FuelBurnFullGalPerMin = 1.5f,
+        // Two main tanks ahead of the cockpit, 48 upper + 37 lower imperial gallons (the same on the Mk I and Mk IX).
+        FuelCapacityGal = 85f,
+        // Imperial gallons an hour against throttle, from the Spitfire IX Pilot's Notes (AP 1565J) and A&AEE trials of the
+        // Merlin 66 (JL165): full throttle is combat power, +18 lb/3,000 rpm, about 150 gal/hr; 0.8 is max climb,
+        // +12 lb/2,850 rpm, 105 gal/hr; 0.6 (AI cruise) is weak-mixture cruise, +3.75 lb/2,650 rpm, about 65 gal/hr; idle
+        // is an estimate (no published figure). So a full load lasts ~34 min flat out and ~78 min at cruise.
+        FuelBurnTable = new (float throttle, float galPerHour)[]
+        {
+            (0f, 10f), (0.6f, 65f), (0.8f, 105f), (1f, 150f),
+        },
+        FuelTankParts = new[] { Part.Fuselage },                     // the tanks sit between the firewall and the cockpit
         EngineAheadFt = 11f,
 
         // ---- Limits ----

@@ -70,11 +70,17 @@ public static class DamageTuning
     // ---------------------------------------------------------------- engine, fuel and fire
 
     // Engine power (thrust) is the engine's hit points as a fraction: 50 hp, half the thrust; no fuel, none. How much fuel
-    // an aircraft carries and burns is its type's (Airframe).
+    // an aircraft carries and burns, and which parts hold its tanks, is its type's (Airframe).
 
     /// <summary>Each time the engine enters yellow and then orange it rolls this chance of springing a fuel leak.</summary>
     public static float LeakChance = 0.33f;
-    public static float LeakGalPerMin = 3f;                    // per leak
+    /// <summary>Each time a part holding fuel tanks (Airframe.FuelTankParts) enters a worse band it rolls this chance of a
+    /// holed tank. (The Spitfire's lower tank was self-sealing, the upper one wasn't, so not every hit leaks.)</summary>
+    public static float TankLeakChance = 0.4f;
+    /// <summary>Per leak, on top of what the engine burns. A .303 hole under a couple of feet of fuel runs about 2 gal/min
+    /// (Torricelli); a torn fuel line or a bigger tear more, so 3 a leak: two leaks drain a Spitfire's 85 gallons in
+    /// about twelve minutes at cruise, against nearly 80 without them.</summary>
+    public static float LeakGalPerMin = 3f;
 
     /// <summary>Entering red starts a fire for certain (and no more leak rolls). Its strength follows the engine: just into
     /// red is about 1%, 0 hp is 100%. While it burns it eats the engine at between these rates (hp per second, weakest to
