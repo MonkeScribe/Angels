@@ -1281,6 +1281,7 @@ public class Game1 : Game
         DrawHud();
         if (_showHitboxes) DrawDamageReadout();
         _instruments.Draw(_sb, _fm, GraphicsDevice.Viewport.Bounds, Scale);
+        _instruments.DrawFuel(_sb, _dmg.FuelGal, Player.Airframe.FuelCapacityGal, _dmg.Leaks, _time, GraphicsDevice.Viewport.Bounds, Scale);
         _gunsight.Draw(_sb, _pixel, sightRect, s, _firing, _sightAlpha);
         DrawBanner();
         DrawFps();
