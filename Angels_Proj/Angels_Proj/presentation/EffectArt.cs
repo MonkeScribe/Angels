@@ -25,7 +25,7 @@ public sealed class EffectArt
 
     /// <summary>Where the flame's base is in a fire frame (fraction of its height from the top), and how much of the
     /// frame's height and width the flame itself fills.</summary>
-    public const float FireBaseY = 0.875f, FireLengthFrac = 0.75f, FireWidthFrac = 0.45f;
+    public const float FireBaseY = 0.8f, FireLengthFrac = 0.7f, FireWidthFrac = 0.4f;
 
     public EffectArt(GraphicsDevice gd)
     {
