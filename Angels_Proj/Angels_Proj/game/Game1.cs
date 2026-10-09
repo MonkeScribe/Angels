@@ -1583,7 +1583,7 @@ public class Game1 : Game
         var ty = y + line * rowH;
         PixelFont.Draw(_sb, _pixel, $"TAS {_fm.TasMph:0} MPH   MACH {_fm.Mach:0.00}   G {_fm.LoadFactor:0.0}", new Vector2(x, ty), px, white);
         PixelFont.Draw(_sb, _pixel, $"PITCH {MathHelper.ToDegrees(_fm.Gamma):+0;-0;0}  SET {_fm.PitchCmdDeg:+0;-0;0}", new Vector2(x, ty + 10 * px), px, white);
-        PixelFont.Draw(_sb, _pixel, $"HITS {_worldModel.Hits}", new Vector2(x, ty + 20 * px), px, white);
+        PixelFont.Draw(_sb, _pixel, $"HITS {_worldModel.Hits}   KILLS {_pilot.Kills}", new Vector2(x, ty + 20 * px), px, white);
         if (_arcade) PixelFont.Draw(_sb, _pixel, "ARCADE", new Vector2(x, ty + 30 * px), px, new Color(255, 206, 84));
 
         var wy = ty + 42 * px;

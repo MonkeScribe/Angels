@@ -65,6 +65,13 @@ public abstract class Aircraft
 
     /// <summary>The pilot is dead (canopy gone): nobody flies it any more.</summary>
     public bool PilotKilled;
+
+    /// <summary>A confirmed kill: one of its parts is gone. It can be killed only once, and it stays killed whatever
+    /// happens to it after.</summary>
+    public bool Killed;
+    /// <summary>Who gets the kill: the pilot who dealt the last blow to the part that went (null if nobody did, e.g. a
+    /// debug hit).</summary>
+    public Pilot KilledBy;
     private readonly bool[] _goneSeen;                      // parts whose loss has been dealt with
 
     /// <summary>Any part on fire.</summary>
@@ -173,20 +180,29 @@ public abstract class Aircraft
     // ---------------------------------------------------------------- damage
 
     /// <summary>A round hits one of its parts (see DamageModel.Hit). Returns the hit points the part lost.</summary>
-    public float Hit(Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng)
+    public float Hit(Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng, Pilot by = null)
     {
         var loss = DamageModel.Hit(this[part], weapon, impactSpeedFtS, rng);
-        if (part == Part.Engine && loss > 0f) EngineDamaged(rng);
+        Damaged(part, loss, by, rng);
         return loss;
     }
 
     /// <summary>Damage that has already got through a part's armour (see DamageModel.Apply), for a round that carries its
     /// damage on from part to part. Returns the hit points the part lost.</summary>
-    public float TakeDamage(Part part, DamageTuning.Weapon weapon, float left, Random rng)
+    public float TakeDamage(Part part, DamageTuning.Weapon weapon, float left, Random rng, Pilot by = null)
     {
         var loss = DamageModel.Apply(this[part], weapon, left);
-        if (part == Part.Engine && loss > 0f) EngineDamaged(rng);
+        Damaged(part, loss, by, rng);
         return loss;
+    }
+
+    /// <summary>A round has taken hit points off a part: whoever fired it dealt the part's latest blow (and so lit any
+    /// engine fire that follows).</summary>
+    private void Damaged(Part part, float loss, Pilot by, Random rng)
+    {
+        if (loss <= 0f) return;
+        if (by != null) this[part].LastHitBy = by;
+        if (part == Part.Engine) EngineDamaged(rng);
     }
 
     /// <summary>Takes hit points straight off a part (debug, or damage that isn't a round).</summary>
@@ -248,11 +264,16 @@ public abstract class Aircraft
         {
             if (!p.Gone || !p.OnFire || p == Engine) continue;
             foreach (var n in DamageModel.Neighbours(p.Kind))
-                if (!this[n].OnFire && rng.NextDouble() < DamageTuning.FireSpreadChancePerSec * dt) this[n].OnFire = true;
+                if (!this[n].OnFire && rng.NextDouble() < DamageTuning.FireSpreadChancePerSec * dt)
+                {
+                    this[n].OnFire = true;
+                    this[n].LastHitBy = p.LastHitBy;   // the fire is the blow of whoever set it
+                }
         }
     }
 
-    /// <summary>Deals with each part the moment it is gone (once):
+    /// <summary>Deals with each part the moment it is gone (once). The first part gone is a confirmed kill, credited to the
+    /// pilot who dealt that part its last blow (see Killed). Then:
     ///   engine   - blows up: an explosion that destroys one random part touching it and sets it alight (so that
     ///              part's own loss follows); the engine burns on, but its own fire never spreads after that;
     ///   fuselage - the airframe breaks: an explosion, it burns, and the aircraft noses over into a steep spiralling dive;
@@ -266,6 +287,12 @@ public abstract class Aircraft
             var p = Parts[i];
             if (!p.Gone || _goneSeen[i]) continue;
             _goneSeen[i] = true;
+            if (!Killed)
+            {
+                Killed = true;
+                KilledBy = p.LastHitBy;
+                if (KilledBy != null && KilledBy != Pilot) KilledBy.Kills++;
+            }
             switch (p.Kind)
             {
                 case Part.Engine:
@@ -278,6 +305,7 @@ public abstract class Aircraft
                     var blown = this[near[rng.Next(near.Length)]];
                     blown.Hp = 0f;
                     blown.OnFire = true;
+                    blown.LastHitBy = p.LastHitBy;   // whoever blew the engine took this part too
                     break;
                 case Part.Fuselage:
                     fx.Explosion(FireFt(p), 40f, IsPlayer);
@@ -363,6 +391,9 @@ public sealed class AircraftPart
     public float Armor, Integrity, DamageMultiplier;
     public readonly DamageTuning.HitBox[] Boxes;
     public bool OnFire;
+    /// <summary>The pilot who dealt it its latest blow: the last round to take hit points off it, or the fire that whoever
+    /// lit it set here. Whoever this is when the part goes gets the kill.</summary>
+    public Pilot LastHitBy;
     /// <summary>The middle of its biggest hit box, in the aircraft's frame: where its fire burns.</summary>
     public readonly Vector3 Centre;
 
