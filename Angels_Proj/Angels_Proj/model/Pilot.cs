@@ -8,6 +8,9 @@ namespace Angels_Proj;
 /// when it pulls the trigger (Fire) its aircraft's guns put projectiles into the world. The player and every AI are pilots.</summary>
 public abstract class Pilot
 {
+    /// <summary>Confirmed kills: aircraft whose part this pilot's shot destroyed (see Aircraft.Killed).</summary>
+    public int Kills;
+
     public abstract void Fly(Aircraft plane);
 
     /// <summary>One tick with the trigger held: every gun on the aircraft cycles its share of rounds, and each round becomes a

@@ -125,10 +125,10 @@ public sealed class World
 
     /// <summary>Damage that has got through a part's armour lands on it (see Aircraft.TakeDamage). Returns the hit points
     /// the part lost.</summary>
-    public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float left, Random rng)
+    public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float left, Random rng, Pilot by)
     {
         Hits++;
-        return a.TakeDamage(part, weapon, left, rng);
+        return a.TakeDamage(part, weapon, left, rng, by);
     }
 
     /// <summary>The twelve edges of every hit box of an aircraft, as pairs of world points (feet), coloured by the state of

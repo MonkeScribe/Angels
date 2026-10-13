@@ -129,7 +129,7 @@ public sealed class Projectile
                     if (h.Plane != plane) continue;
                     var left = Damage - plane[h.Part].Armor;
                     if (left <= 0f) break;   // stopped by the armour
-                    world.Hit(plane, h.Part, Weapon, left, rng);
+                    world.Hit(plane, h.Part, Weapon, left, rng, Shooter.Pilot);
                     Damage = left;
                 }
                 if (ShowEffects) fx.Spark(Pos + dir * firstHit);
