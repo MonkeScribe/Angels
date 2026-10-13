@@ -387,45 +387,6 @@ public sealed class AircraftPart
     public string Name => DamageModel.Name(Kind);
 }
 
-/// <summary>
-/// What an aircraft type is made of and can stand, for the flight model to fly: its airframe (weight, wing, drag, engine,
-/// propeller and fuel) and its limits (speed, g, stall behaviour, controls). Each aircraft carries one (Aircraft.Airframe)
-/// and its flight model works everything out from it, so a different airframe flies differently on the same inputs.
-/// It has no values of its own: each aircraft type fills one in (see Spitfire).
-/// </summary>
-public sealed class Airframe
-{
-    public string Name;
-
-    // ---- Airframe ----
-    public float WeightLb, WingArea, Span;          // lb, sq ft, ft
-    public float CD0, OswaldE, CLmax;               // zero-lift drag, span efficiency, max lift coefficient
-    public float PropEff, StaticThrustCapLb;        // propeller efficiency; the most thrust it gives at low speed
-    public float IdlePropDragCD;                    // a throttled-back propeller's drag
-    /// <summary>Engine power (hp) at full throttle against altitude (ft); beyond the table it falls away.</summary>
-    public (float alt, float hp)[] PowerTable;
-    public float FuelCapacityGal;                   // imperial gallons
-    public float FuelBurnIdleGalPerMin, FuelBurnFullGalPerMin;   // at idle and full throttle
-    public float EngineAheadFt;                     // where the engine sits, ahead of the aircraft's origin
-
-    public float AspectRatio => Span * Span / WingArea;
-
-    // ---- Limits ----
-    public float VneMph;                            // never-exceed, indicated
-    public float WaveDragK;                         // compressibility drag above Mach 0.75
-    public float OverspeedDragK;                    // structural-limit drag above Vne
-    public float MaxNPos, MaxNNeg;                  // pitch-axis g limits, up and down
-    public float NTurnMax, NStruct;                 // g at full bank at reference speed; structural limit
-    public float QRef;                              // dynamic pressure (psf) the turn g is referenced to
-    public float StallDragCD;                       // separated flow when the wing is over-pulled
-    public float RudderRate;                        // rad per tick of flat yaw at full rudder
-    public float RudderSlipDragCD;                  // extra drag at full rudder
-    public float StallNoseDropDegS;                 // how fast a fully stalled nose falls toward the ground
-    public float MaxClimbDeg, MaxDiveDeg;           // steepest flight path the pilot can command
-    public float CeilingFt;
-    public float RollResponse;                      // how quickly it rolls to the bank asked for: fraction of the gap per tick
-}
-
 /// <summary>How an aircraft type looks: the sprite sheet it is drawn from, its propellers and where its engine fires
 /// show. Positions are in the sprite sphere's frame, feet from the middle of a frame (x toward the nose, y toward the
 /// left wing, z up).</summary>

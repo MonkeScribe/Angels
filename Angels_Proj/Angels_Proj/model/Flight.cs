@@ -100,19 +100,6 @@ public sealed class FlightModel
         sound = MathF.Sqrt(1.4f * 287.05f * t) / 0.3048f;
     }
 
-    private float PowerHp(float alt)
-    {
-        if (alt <= Airframe.PowerTable[0].alt) return Airframe.PowerTable[0].hp;
-        for (var i = 1; i < Airframe.PowerTable.Length; i++)
-            if (alt <= Airframe.PowerTable[i].alt)
-            {
-                var (a0, p0) = Airframe.PowerTable[i - 1];
-                var (a1, p1) = Airframe.PowerTable[i];
-                return MathHelper.Lerp(p0, p1, (alt - a0) / (a1 - a0));
-            }
-        return 0f;
-    }
-
     /// <summary>The wheel moves the nose by this many degrees of flight path, straight away.</summary>
     public void WheelPitch(float deg)
     {
@@ -189,7 +176,7 @@ public sealed class FlightModel
                 Gamma += (-0.95f - Gamma) * 0.02f;
                 Bank += (SpinDir * 1.2f - Bank) * 0.03f;
                 turn = SpinDir * 0.012f;
-                Speed = MathF.Min(380f / Mph, Speed + 0.2f / Mph);
+                Speed += 0.2f / Mph;
                 break;
             case FlightFailure.Spin:
                 Gamma += (-1.25f - Gamma) * 0.03f;
@@ -201,7 +188,7 @@ public sealed class FlightModel
                 Bank *= 0.995f;
                 if (Gamma > -MathHelper.PiOver2 * 0.9f) Gamma -= MathHelper.ToRadians(NoseDropDegS) * Dt;
                 // Gravity along the path, against a drag that holds it near cruise when level.
-                Speed = MathHelper.Clamp(Speed + (-G * MathF.Sin(Gamma) - (Speed - 270f / Mph) * 0.05f) * Dt, 80f / Mph, 480f / Mph);
+                Speed = MathF.Max(80f / Mph, Speed + (-G * MathF.Sin(Gamma) - (Speed - 270f / Mph) * 0.05f) * Dt);
                 break;
         }
         Heading = MathHelper.WrapAngle(Heading + turn);
@@ -251,14 +238,16 @@ public sealed class FlightModel
             if (SnapOnRelease) PitchCmdDeg = SnapPitch(MathHelper.ToDegrees(Gamma));
             _pitchHeld = false;
         }
-        // The ailerons roll to the bank asked for, as fast as what's left of them allows. A wing short of lift rolls the
-        // aircraft toward it: the bank settles off what was asked for, and if the ailerons can't hold it, it keeps going.
+        // The ailerons roll to the bank asked for, at the aircraft's own roll rate for the speed it is flying (Airframe.
+        // RollRateRadS) as far as what's left of them allows. A wing short of lift rolls the aircraft toward it: the bank
+        // settles off what was asked for, and if the ailerons can't hold it, it keeps going.
+        Atmosphere(Altitude, out Rho, out SoundSpeed);
         var bankTarget = MathHelper.Clamp(targetBank + RollBias * MaxBank, -MaxBank, MaxBank);
-        Bank += (bankTarget - Bank) * bankResponse * RollAuthority;
+        var maxRoll = Airframe.RollRateRadS(IasMph) * RollAuthority * Dt;
+        Bank += MathHelper.Clamp((bankTarget - Bank) * bankResponse * RollAuthority, -maxRoll, maxRoll);
         Bank += RollBias * DamageTuning.WingRollDriftRadS * (1f - RollAuthority) * Dt;
         Bank = MathHelper.Clamp(Bank, -MathHelper.PiOver2, MathHelper.PiOver2);
 
-        Atmosphere(Altitude, out Rho, out SoundSpeed);
         var v = MathF.Max(Speed, 20f);
         var q = 0.5f * Rho * v * v;
         var mach = v / SoundSpeed;
@@ -312,17 +301,16 @@ public sealed class FlightModel
         var cl = nDrag * Airframe.WeightLb / (q * Airframe.WingArea);
         var cd = Airframe.CD0 + cl * cl / (MathF.PI * Airframe.OswaldE * Airframe.AspectRatio) + Airframe.IdlePropDragCD * (1f - Throttle)
                  + Airframe.StallDragCD * stallDepth; // separated flow when the wing is over-pulled
-        if (mach > 0.75f) cd += Airframe.WaveDragK * (mach - 0.75f) * (mach - 0.75f);
-        var ias = v * MathF.Sqrt(Rho / Rho0) * Mph;
-        if (ias > Airframe.VneMph) { var o = (ias - Airframe.VneMph) / 50f; cd += Airframe.OverspeedDragK * o * o; }
         cd += Airframe.RudderSlipDragCD * MathF.Abs(Controls.Yaw);   // a skid presents the fuselage's side to the air
         var drag = cd * q * Airframe.WingArea;
 
         // Propeller thrust: power / speed, with efficiency falling off at low speed.
         var eta = Airframe.PropEff * (1f - MathF.Exp(-v / 60f));
-        var thrust = MathF.Min(Airframe.StaticThrustCapLb * EnginePower, eta * Throttle * EnginePower * PowerHp(Altitude) * 550f / v);
+        var thrust = MathF.Min(Airframe.StaticThrustCapLb * EnginePower, eta * Throttle * EnginePower * Airframe.PowerHp(Altitude) * 550f / v);
 
         Speed = MathF.Max(0f, Speed + G * ((thrust - drag) / Airframe.WeightLb - MathF.Sin(Gamma)) * Dt);
+        // An over-pulled wing is mostly a brake: the airflow has separated, and the speed goes with it however the nose points.
+        if (AccelStall) Speed *= 1f - Airframe.StallBleedPerSec * MathF.Max(stallDepth, 0.3f) * Dt;
         Climb();
 
         // Arcade turning: tighter at low airspeed, softer as the wing runs out of lift.
