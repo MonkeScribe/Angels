@@ -58,9 +58,12 @@ public abstract class Aircraft
 
     // ---------------------------------------------------------------- fuel, leaks, fire
 
+    /// <summary>Fuel left, imperial gallons (it starts full: Airframe.FuelCapacityGal).</summary>
     public float FuelGal;
+    /// <summary>Holes leaking fuel, from engine damage (its fuel lines) or hits on a tank; each drains LeakGalPerMin.</summary>
     public int Leaks;
     private PartState _engineSeen = PartState.Undamaged;   // the engine band last dealt with, so each band rolls once
+    private readonly PartState[] _tankSeen;                 // the same for each part, for its fuel tanks
     private float _throttleOffSec;
 
     /// <summary>The pilot is dead (canopy gone): nobody flies it any more.</summary>
@@ -154,6 +157,7 @@ public abstract class Aircraft
         Engine = this[Part.Engine]; Canopy = this[Part.Canopy]; LeftWing = this[Part.LeftWing];
         RightWing = this[Part.RightWing]; Tail = this[Part.Tail]; Fuselage = this[Part.Fuselage];
         _goneSeen = new bool[Parts.Length];
+        _tankSeen = new PartState[Parts.Length];
     }
 
     /// <summary>A point in the aircraft's own frame (feet: x toward the right wing, y up, z toward the tail) in the world (feet).</summary>
@@ -210,7 +214,22 @@ public abstract class Aircraft
     {
         var p = this[part];
         p.Hp = MathF.Max(0f, p.Hp - hp);
+        PartDamaged(part, rng);
+    }
+
+    /// <summary>A part has just lost hit points: the engine has its say (EngineDamaged), and a part holding fuel tanks
+    /// rolls TankLeakChance of a new leak for each damage band it has newly entered.</summary>
+    private void PartDamaged(Part part, Random rng)
+    {
         if (part == Part.Engine) EngineDamaged(rng);
+        if (!Airframe.IsFuelTank(part)) return;
+        var i = (int)part;
+        var now = this[part].State;
+        while (_tankSeen[i] < now)
+        {
+            _tankSeen[i]++;
+            if (rng.NextDouble() < DamageTuning.TankLeakChance) Leaks++;
+        }
     }
 
     /// <summary>The engine has just lost hit points: each band it has newly entered has its say (a leak roll on entering
@@ -231,15 +250,15 @@ public abstract class Aircraft
         }
     }
 
-    /// <summary>Fuel burns (by throttle) and leaks; a fire burns on while the throttle is up, eating the engine, and goes
-    /// out with the throttle held at idle or the fuel gone. Once the engine is gone the throttle can't starve it: only
-    /// running out of fuel puts it out.</summary>
+    /// <summary>Fuel burns (by throttle, see Airframe.FuelBurnTable) and every leak drains it faster on top; a fire burns
+    /// on while the throttle is up, eating the engine, and goes out with the throttle held at idle or the fuel gone. Once
+    /// the engine is gone the throttle can't starve it: only running out of fuel puts it out.</summary>
     private void UpdateEngine(float dt)
     {
         var throttle = Flight.Throttle;
         if (FuelGal > 0f)
         {
-            var burn = EnginePower > 0f ? MathHelper.Lerp(Airframe.FuelBurnIdleGalPerMin, Airframe.FuelBurnFullGalPerMin, throttle) : 0f;
+            var burn = EnginePower > 0f ? Airframe.FuelBurnGalPerHour(throttle) / 60f : 0f;   // gal/min
             FuelGal = MathF.Max(0f, FuelGal - (burn + Leaks * DamageTuning.LeakGalPerMin) * dt / 60f);
         }
         if (!Engine.OnFire) return;
@@ -436,10 +455,27 @@ public sealed class Airframe
     /// <summary>Engine power (hp) at full throttle against altitude (ft); beyond the table it falls away.</summary>
     public (float alt, float hp)[] PowerTable;
     public float FuelCapacityGal;                   // imperial gallons
-    public float FuelBurnIdleGalPerMin, FuelBurnFullGalPerMin;   // at idle and full throttle
+    /// <summary>How fast the engine drinks (imperial gallons an hour) against throttle (0-1), from idle to full; between
+    /// two points it is straight. Real engines run lean at cruise and rich at full power, so it isn't a straight line.</summary>
+    public (float throttle, float galPerHour)[] FuelBurnTable;
+    /// <summary>The parts its fuel tanks are in: a hit that takes one of them into a worse damage band may hole a tank.</summary>
+    public Part[] FuelTankParts;
     public float EngineAheadFt;                     // where the engine sits, ahead of the aircraft's origin
 
     public float AspectRatio => Span * Span / WingArea;
+
+    /// <summary>Fuel burnt at this throttle, imperial gallons an hour (see FuelBurnTable).</summary>
+    public float FuelBurnGalPerHour(float throttle)
+    {
+        var t = FuelBurnTable;
+        if (throttle <= t[0].throttle) return t[0].galPerHour;
+        for (var i = 1; i < t.Length; i++)
+            if (throttle <= t[i].throttle)
+                return MathHelper.Lerp(t[i - 1].galPerHour, t[i].galPerHour, (throttle - t[i - 1].throttle) / (t[i].throttle - t[i - 1].throttle));
+        return t[^1].galPerHour;
+    }
+
+    public bool IsFuelTank(Part p) => FuelTankParts != null && Array.IndexOf(FuelTankParts, p) >= 0;
 
     // ---- Limits ----
     public float VneMph;                            // never-exceed, indicated

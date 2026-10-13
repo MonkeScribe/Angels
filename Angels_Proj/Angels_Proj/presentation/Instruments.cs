@@ -9,6 +9,7 @@ namespace Angels_Proj;
 ///   left:  air speed indicator, artificial horizon, rate of climb      (the panel's top row)
 ///   right: altimeter, directional gyro, turn and slip                  (the panel's bottom row)
 /// Faces are baked once into textures (black dials, white markings); needles and cards are drawn live.
+/// Above the left cluster, on a little plate of its own, sits the fuel contents gauge.
 /// </summary>
 public sealed class Instruments
 {
@@ -19,6 +20,9 @@ public sealed class Instruments
     private readonly Texture2D _pixel;
     private readonly Texture2D _bezel, _asi, _vsi, _alt, _dgCard, _turn, _ball;
     private readonly Horizon _horizon;
+    private readonly GraphicsDevice _gd;
+    private Texture2D _fuel;                   // baked for the capacity it was last drawn with
+    private float _fuelFaceGal = -1f, _fuelShown = -1f;
 
     // Instruments lag a little like real ones; this smooths the raw feeds.
     private float _vsi_fpm, _turnRate, _slip;
@@ -29,6 +33,7 @@ public sealed class Instruments
     public Instruments(GraphicsDevice gd, Texture2D pixel)
     {
         _pixel = pixel;
+        _gd = gd;
         _horizon = new Horizon(gd);
         _bezel = MakeBezel(gd);
         _asi = MakeAsi(gd);
@@ -278,6 +283,31 @@ public sealed class Instruments
         return t;
     }
 
+    // Fuel contents: empty at 7:30, full at 4:30 (270 degrees), in imperial gallons; the last tenth is red.
+    private static float FuelDeg(float gal, float capacity) => -135f + Math.Clamp(gal / capacity, 0f, 1.03f) * 270f;
+
+    private static Texture2D MakeFuel(GraphicsDevice gd, float capacity)
+    {
+        var c = new Canvas();
+        c.Face(FaceBlack);
+        for (var v = capacity * 0.1f; v > 0f; v -= 0.5f)
+            c.Tick(C, C, FuelDeg(v, capacity), FaceR - 3, FaceR - 12, 4f, Red);
+        for (var v = 0; v <= capacity; v += 5)
+        {
+            var big = v % 10 == 0;
+            c.Tick(C, C, FuelDeg(v, capacity), FaceR - 3, FaceR - (big ? 17 : 9), big ? 2.6f : 1.4f, Color.White);
+            if (v % 20 == 0)
+            {
+                var p = Pol(FuelDeg(v, capacity), 80f);
+                c.Text(v.ToString(), p.X, p.Y, 3, Color.White);
+            }
+        }
+        c.Tick(C, C, FuelDeg(capacity, capacity), FaceR - 3, FaceR - 19, 3.4f, Color.White);
+        c.Text("FUEL", C, C - 34, 3, Color.White);
+        c.Text("GALLONS", C, C + 44, 2, Color.White);
+        return c.ToTexture(gd);
+    }
+
     // ---------------------------------------------------------------- live drawing
 
     private void Needle(SpriteBatch sb, Vector2 pivot, float deg, float length, float thick, float tail, Color col, float k)
@@ -381,6 +411,47 @@ public sealed class Instruments
         var ballY = 78f - ballX * ballX * 0.012f; // rolls up the curved tube
         sb.Draw(_ball, c5 + new Vector2(ballX, ballY) * k, null, Color.White, 0f, new Vector2(16f), k * 0.75f, SpriteEffects.None, 0f);
         Face(_bezel, c5);
+    }
+
+    /// <summary>The fuel contents gauge, on its own little plate above the right end of the left cluster (clear of the
+    /// gunsight window). Its needle follows the fuel left; with a leak a red LEAK flashes on the face. Needs the sprite
+    /// batch already begun.</summary>
+    public void DrawFuel(SpriteBatch sb, float fuelGal, float capacityGal, int leaks, float time, Rectangle viewport, float scale)
+    {
+        if (capacityGal <= 0f) return;
+        if (_fuel == null || _fuelFaceGal != capacityGal)
+        {
+            _fuel?.Dispose();
+            _fuel = MakeFuel(_gd, capacityGal);
+            _fuelFaceGal = capacityGal;
+            _fuelShown = fuelGal;
+        }
+        _fuelShown += (fuelGal - _fuelShown) * 0.1f;   // the float settles rather than jumps
+
+        float d = 124f * scale, gap = 9f * scale, pad = 10f * scale, margin = 12f * scale;
+        var plateW = 3 * d + 2 * gap + 2 * pad;
+        var mainTop = viewport.Height - margin - (d + 2 * pad);
+        var fd = d * 0.8f;                                   // a smaller dial than the Basic Six
+        var size = fd + 2 * pad;
+        var plate = new Rectangle((int)(margin + plateW - size), (int)(mainTop - gap - size), (int)size, (int)size);
+        DrawPlate(sb, plate, scale);
+
+        var k = fd / N;
+        var c = new Vector2(plate.X + size / 2f, plate.Y + size / 2f);
+        sb.Draw(_fuel, c, null, Color.White, 0f, new Vector2(N / 2f, N / 2f), k, SpriteEffects.None, 0f);
+        if (leaks > 0 && (time * 3f) % 1f < 0.6f)
+        {
+            // Flashes over the GALLONS legend.
+            const string leak = "LEAK";
+            var px = Math.Max(2, (int)MathF.Round(2f * scale));
+            int w = PixelFont.Measure(leak, px), h = 7 * px;
+            var at = new Vector2(MathF.Round(c.X - w / 2f), MathF.Round(c.Y + 44f * k - h / 2f));
+            sb.Draw(_pixel, new Rectangle((int)at.X - px, (int)at.Y - px, w + 2 * px, h + 2 * px), FaceBlack);
+            PixelFont.Draw(sb, _pixel, leak, at, px, Red);
+        }
+        Needle(sb, c, FuelDeg(_fuelShown, capacityGal), 98f, 4f, 22f, Cream, k);
+        Hub(sb, c, 7f, k);
+        sb.Draw(_bezel, c, null, Color.White, 0f, new Vector2(N / 2f, N / 2f), k, SpriteEffects.None, 0f);
     }
 
     private void DrawPlate(SpriteBatch sb, Rectangle r, float s)
