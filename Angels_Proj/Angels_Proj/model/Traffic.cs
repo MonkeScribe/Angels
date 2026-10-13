@@ -6,7 +6,7 @@ namespace Angels_Proj;
 
 /// <summary>
 /// Brings other aircraft into the world and takes them away again: loose V formations of 2-5 Spitfires at assorted
-/// altitudes near the player, each a full aircraft (Spitfire) flown by an AI pilot (FormationPilot) on the same flight model and
+/// altitudes near the player, each a full aircraft (SpitfireMk2) flown by an AI pilot (FormationPilot) on the same flight model and
 /// damage as the player's. Formations that drift out of the area where they could be seen are taken away and new ones
 /// brought in somewhere visible.
 /// </summary>
@@ -102,7 +102,7 @@ public sealed class Traffic
                 Leader = i == 0 ? null : f.Planes[0], Slot = Slots[i], SlotAltFt = slotAlt,
                 CourseHeading = heading, TurnRate = turnRate, CruiseAltFt = alt + slotAlt, CruiseThrottle = throttle,
             };
-            var a = new Spitfire(pilot)
+            var a = new SpitfireMk2(pilot)
             {
                 Pos = pos + right * Slots[i].X - dir * Slots[i].Y,
                 Salt = _rng.Next(64),

@@ -9,9 +9,9 @@ using Microsoft.Xna.Framework;
 const float Dt = 1f / 60f;
 var types = new List<(string name, Func<Airframe> make)>
 {
-    ("SPITFIRE", Spitfire.MakeAirframe),
-    ("BF 109 E-4", Airframes.Bf109E4),
-    ("FW 190 A-4", Airframes.Fw190A4),
+    ("SPITFIRE MK II", SpitfireMk2Airframe.Make),
+    ("SPITFIRE LATE WAR", SpitfireLateWarAirframe.Make),
+    ("HE 111", He111Airframe.Make),
 };
 var alts = new[] { 0f, 10000f, 20000f, 30000f };
 

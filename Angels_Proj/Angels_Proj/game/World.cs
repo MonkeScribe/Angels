@@ -21,7 +21,7 @@ public sealed class World
     public Aircraft SpawnPlayer(Pilot pilot, Vector2 pos, bool arcade)
     {
         if (Player != null) Planes.Remove(Player);
-        Player = new Spitfire(pilot) { Pos = pos, IsPlayer = true };
+        Player = new SpitfireMk2(pilot) { Pos = pos, IsPlayer = true };
         Player.Flight.VerticalRateScale = arcade ? 2f : 1f;
         Planes.Add(Player);
         Refresh();

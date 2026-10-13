@@ -14,7 +14,7 @@ public readonly record struct SuperchargerStage(float SeaLevelHp, float RatedHp,
 /// <summary>
 /// What an aircraft type is made of and can stand, for the flight model to fly. Each aircraft carries one
 /// (Aircraft.Airframe) and its flight model works everything out from it, so a different airframe flies differently on
-/// the same inputs. It has no values of its own: each aircraft type fills one in (see Spitfire, Airframes).
+/// the same inputs. It has no values of its own: each aircraft type fills one in (see model/planes).
 ///
 /// The six things that decide who wins a fight, and what sets each of them:
 ///   rate of climb          - engine power at height (Stages) over weight, less the drag of climbing (CD0, wing)

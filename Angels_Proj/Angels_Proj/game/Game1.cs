@@ -291,7 +291,7 @@ public class Game1 : Game
 
     // The targeting box of a traffic plane: one box over the whole sprite (96 px, nose up, centred on 48,48), from
     // wingtip to wingtip and nose to tail, in sprite px. Hovering it tells the plane to turn and pitch at the target.
-    // This is separate from the hit boxes that rounds are tested against (see each aircraft's parts, Spitfire.HitBoxes, and the HITBOXES view).
+    // This is separate from the hit boxes that rounds are tested against (see each aircraft's parts, SpitfireMk2.HitBoxes, and the HITBOXES view).
     private const float BoxX0 = -46f, BoxY0 = -42f, BoxX1 = 46f, BoxY1 = 40f;
     private const float HoverPadPx = 4f;             // sprite px of slack round the box, so the plane is easy to hover
 
@@ -394,7 +394,7 @@ public class Game1 : Game
     {
         if (_phase != Phase.Flying || InTest) Reset();
         _traffic.Clear(_worldModel);
-        _testTarget = new Spitfire(null) { Pos = pos };
+        _testTarget = new SpitfireMk2(null) { Pos = pos };
         _testTarget.Flight.Altitude = altFt;
         _testTarget.Flight.Heading = heading;
         _worldModel.Add(_testTarget);

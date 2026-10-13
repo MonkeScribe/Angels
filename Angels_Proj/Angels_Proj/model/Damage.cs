@@ -56,7 +56,7 @@ public static class DamageTuning
     public const float MaxHp = 100f;
 
     // Each part's armour (subtracted from every roll that hits it), integrity (see the class notes) and damage
-    // multiplier belong to the aircraft type: see Spitfire.
+    // multiplier belong to the aircraft type: see SpitfireMk2 (model/planes).
 
     /// <summary>Below the floor, damage is multiplied by a factor that slides from BelowFloorScale (at the floor) down to
     /// nothing at the hard stop, StopAboveBlackHp above the black line (see DamageModel.HardStop): a weak weapon keeps
@@ -128,7 +128,7 @@ public static class DamageTuning
         public HitBox(Vector3 min, Vector3 max, Part part) { Min = min; Max = max; Part = part; }
     }
 
-    // Each aircraft type has its own hit boxes: see Spitfire.
+    // Each aircraft type has its own hit boxes: see SpitfireMk2 (model/planes).
 }
 
 /// <summary>The damage model's rules (the numbers are in DamageTuning).</summary>
