@@ -58,6 +58,7 @@ public sealed class FlightModel
     public float Bank, Heading;
     public bool SnapOnRelease = true;               // let go of the stick: the pitch settles at the nearest 10 degrees
     public float VerticalRateScale = 1f;           // 1 = realistic; 2 = arcade (altitude changes twice as fast)
+    public float ThrustScale = 1f;                 // 1 = realistic; 2 = the debug menu's 2X THRUST (player only)
 
     // What damage leaves of the controls, set each tick by the aircraft (Aircraft.UpdateControls). Authorities are the
     // share of each maximum rate still there (1 = all of it): pitch (elevator), roll (ailerons), yaw (rudder) and turn.
@@ -320,7 +321,8 @@ public sealed class FlightModel
 
         // Propeller thrust: power / speed, with efficiency falling off at low speed.
         var eta = Airframe.PropEff * (1f - MathF.Exp(-v / 60f));
-        var thrust = MathF.Min(Airframe.StaticThrustCapLb * EnginePower, eta * Throttle * EnginePower * PowerHp(Altitude) * 550f / v);
+        var thrust = MathF.Min(Airframe.StaticThrustCapLb * EnginePower, eta * Throttle * EnginePower * PowerHp(Altitude) * 550f / v)
+                     * ThrustScale;
 
         Speed = MathF.Max(0f, Speed + G * ((thrust - drag) / Airframe.WeightLb - MathF.Sin(Gamma)) * Dt);
         Climb();

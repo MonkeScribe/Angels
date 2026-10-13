@@ -147,6 +147,7 @@ public class Game1 : Game
     private bool _prevLeft;
     private string _codeBuffer = "";
     private bool _arcade, _cloudsOn = true, _hudBars;
+    private bool _thrust2x;                     // debug menu: the player's engine gives twice the thrust
     private readonly Random _rng = new();
     private Phase _phase = Phase.Flying;
     private string _reason = "";
@@ -219,6 +220,7 @@ public class Game1 : Game
         _mouseAim = false;
         _exitHold = 0;
         _worldModel.SpawnPlayer(_pilot, _pos, _arcade);   // a fresh aircraft where the old one was
+        _fm.ThrustScale = _thrust2x ? 2f : 1f;
         _phase = Phase.Flying;
         _particles.Clear();
         _pan = Vector2.Zero;
@@ -528,6 +530,11 @@ public class Game1 : Game
         {
             _arcade = !_arcade;
             _fm.VerticalRateScale = _arcade ? 2f : 1f; // arcade: altitude gain and loss twice as fast
+        });
+        m.Add("2X THRUST", () => MenuPanel.OnOff(_thrust2x), () =>
+        {
+            _thrust2x = !_thrust2x;
+            _fm.ThrustScale = _thrust2x ? 2f : 1f;
         });
         m.Section("VIEW");
         m.Add("HUD BARS", () => MenuPanel.OnOff(_hudBars), () => _hudBars = !_hudBars);
