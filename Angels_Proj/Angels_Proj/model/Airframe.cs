@@ -67,7 +67,9 @@ public sealed class Airframe
     public bool IsFuelTank(Part p) => FuelTankParts != null && Array.IndexOf(FuelTankParts, p) >= 0;
 
     // ---- Limits ----
-    public float VneMph;                            // never-exceed, indicated: a mark on the gauge, not a limit
+    public float VneMph;                            // never-exceed, indicated; drag climbs above it (OverspeedDragK)
+    public float WaveDragK = 3f;                    // compressibility drag above Mach 0.75
+    public float OverspeedDragK = 0.3f;             // structural-limit drag above Vne
     public float MaxNPos, MaxNNeg;                  // pitch-axis g limits, up and down
     public float NTurnMax, NStruct;                 // g at full bank at reference speed; structural limit
     public float QRef;                              // dynamic pressure (psf) the turn g is referenced to

@@ -302,6 +302,9 @@ public sealed class FlightModel
         var cl = nDrag * Airframe.WeightLb / (q * Airframe.WingArea);
         var cd = Airframe.CD0 + cl * cl / (MathF.PI * Airframe.OswaldE * Airframe.AspectRatio) + Airframe.IdlePropDragCD * (1f - Throttle)
                  + Airframe.StallDragCD * stallDepth; // separated flow when the wing is over-pulled
+        if (mach > 0.75f) cd += Airframe.WaveDragK * (mach - 0.75f) * (mach - 0.75f);
+        var ias = v * MathF.Sqrt(Rho / Rho0) * Mph;
+        if (ias > Airframe.VneMph) { var o = (ias - Airframe.VneMph) / 50f; cd += Airframe.OverspeedDragK * o * o; }
         cd += Airframe.RudderSlipDragCD * MathF.Abs(Controls.Yaw);   // a skid presents the fuselage's side to the air
         var drag = cd * q * Airframe.WingArea;
 
