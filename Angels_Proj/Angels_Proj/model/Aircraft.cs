@@ -11,7 +11,7 @@ namespace Angels_Proj;
 /// the controls and the aircraft does what its flight model and damage make of them.
 ///
 /// This holds no numbers of its own: what an aircraft is (its airframe, limits, hit boxes, armour) comes from its type,
-/// a class built on this one (Spitfire), which hands them over when it is made.
+/// a class built on this one (SpitfireMk2, He111), which hands them over when it is made.
 /// </summary>
 public abstract class Aircraft
 {
@@ -27,12 +27,16 @@ public abstract class Aircraft
 
     // ---------------------------------------------------------------- parts
 
-    public readonly AircraftPart Engine, Canopy, LeftWing, RightWing, Tail, Fuselage;
+    /// <summary>Its engines (one for a fighter, two for a twin, four for a heavy), left to right.</summary>
+    public readonly AircraftPart[] Engines;
 
-    /// <summary>All its parts, in the order of the Part enum (so Parts[(int)Part.Tail] is Tail).</summary>
+    /// <summary>Its wings, left to right. Which way the aircraft spins when one goes is the wing's own side (AircraftPart.Side).</summary>
+    public readonly AircraftPart[] Wings;
+
+    public readonly AircraftPart Canopy, Tail, Fuselage;
+
+    /// <summary>All its parts: by kind in the order of the Part enum, and left to right within a kind.</summary>
     public readonly AircraftPart[] Parts;
-
-    public AircraftPart this[Part p] => Parts[(int)p];
 
     // ---------------------------------------------------------------- look
 
@@ -62,9 +66,9 @@ public abstract class Aircraft
     public float FuelGal;
     /// <summary>Holes leaking fuel, from engine damage (its fuel lines) or hits on a tank; each drains LeakGalPerMin.</summary>
     public int Leaks;
-    private PartState _engineSeen = PartState.Undamaged;   // the engine band last dealt with, so each band rolls once
+    private readonly PartState[] _engineSeen;               // the band last dealt with for each engine, so each band rolls once
     private readonly PartState[] _tankSeen;                 // the same for each part, for its fuel tanks
-    private float _throttleOffSec;
+    private readonly float[] _throttleOffSec;               // how long the throttle has been off with each engine on fire
 
     /// <summary>The pilot is dead (canopy gone): nobody flies it any more.</summary>
     public bool PilotKilled;
@@ -87,26 +91,36 @@ public abstract class Aircraft
         }
     }
 
-    public float EngineHp => Engine.Hp;
-    public PartState EngineState => Engine.State;
+    /// <summary>The engines' hit points averaged: the share of its power left (a twin that has lost one engine is at 50).</summary>
+    public float EngineHp
+    {
+        get
+        {
+            var sum = 0f;
+            foreach (var e in Engines) sum += e.Hp;
+            return sum / Engines.Length;
+        }
+    }
 
-    /// <summary>Thrust available, 0-1: the engine's hit points as a fraction, and nothing without fuel.</summary>
-    public float EnginePower => FuelGal > 0f ? Engine.Hp / DamageTuning.MaxHp : 0f;
+    public PartState EngineState => DamageModel.StateOf(EngineHp);
 
-    /// <summary>How fierce the engine fire is, 0-1: about 1% just into red, 100% with the engine at 0 hp.</summary>
-    public float FireStrength => FireStrengthOf(Engine);
+    /// <summary>Thrust available, 0-1: its power and thrust are shared out equally between its engines, so each engine's hit
+    /// points as a fraction count for one over the number of engines (one lost of four takes a quarter off), and nothing
+    /// without fuel.</summary>
+    public float EnginePower => FuelGal > 0f ? EngineHp / DamageTuning.MaxHp : 0f;
 
-    /// <summary>How fierce a part's fire is, 0-1. The engine's follows its hit points from red (about 1%) to 0 hp (100%);
+    /// <summary>How fierce a part's fire is, 0-1. An engine's follows its hit points from red (about 1%) to 0 hp (100%);
     /// any other part's from DamageTuning.FireMinStrength when whole to 100% at 0 hp.</summary>
     public float FireStrengthOf(AircraftPart p)
     {
         if (!p.OnFire) return 0f;
-        if (p == Engine) return MathHelper.Clamp((DamageTuning.ModerateAbove - p.Hp) / DamageTuning.ModerateAbove, 0.01f, 1f);
+        if (p.Kind == Part.Engine) return MathHelper.Clamp((DamageTuning.ModerateAbove - p.Hp) / DamageTuning.ModerateAbove, 0.01f, 1f);
         return MathHelper.Clamp(1f - p.Hp / DamageTuning.MaxHp, DamageTuning.FireMinStrength, 1f);
     }
 
-    /// <summary>How thick the engine's black smoke is, 0-1.</summary>
-    public float SmokeStrength => MathHelper.Clamp((DamageTuning.SmokeStartsBelowHp - Engine.Hp) / DamageTuning.SmokeStartsBelowHp, 0f, 1f);
+    /// <summary>How thick an engine's black smoke is, 0-1.</summary>
+    public static float SmokeStrengthOf(AircraftPart engine) =>
+        MathHelper.Clamp((DamageTuning.SmokeStartsBelowHp - engine.Hp) / DamageTuning.SmokeStartsBelowHp, 0f, 1f);
 
     // ---------------------------------------------------------------- flight
 
@@ -146,18 +160,39 @@ public abstract class Aircraft
         Flight = new FlightModel(airframe);
         FuelGal = airframe.FuelCapacityGal;
         Pilot = pilot;
-        Parts = new AircraftPart[DamageModel.PartCount];
-        for (var i = 0; i < Parts.Length; i++)
+        // One part for each (kind, index) the hit boxes name; armour, integrity and damage multiplier are per kind.
+        var all = new List<AircraftPart>();
+        for (var k = 0; k < DamageModel.PartCount; k++)
         {
-            var kind = (Part)i;
-            var boxes = new List<DamageTuning.HitBox>();
-            foreach (var b in hitBoxes) if (b.Part == kind) boxes.Add(b);
-            Parts[i] = new AircraftPart(kind, boxes.ToArray(), armor[i], integrity[i], damageMultiplier[i]);
+            var kind = (Part)k;
+            var ofKind = new List<AircraftPart>();
+            foreach (var index in IndicesOf(hitBoxes, kind))
+            {
+                var boxes = new List<DamageTuning.HitBox>();
+                foreach (var b in hitBoxes) if (b.Part == kind && b.Index == index) boxes.Add(b);
+                ofKind.Add(new AircraftPart(kind, boxes.ToArray(), armor[k], integrity[k], damageMultiplier[k]));
+            }
+            if (ofKind.Count == 0) throw new ArgumentException($"{airframe.Name} has no hit box for its {kind}");
+            ofKind.Sort((a, b) => a.Centre.X.CompareTo(b.Centre.X));   // left to right
+            for (var i = 0; i < ofKind.Count; i++) ofKind[i].Name = AircraftPart.NameOf(kind, i, ofKind.Count);
+            all.AddRange(ofKind);
         }
-        Engine = this[Part.Engine]; Canopy = this[Part.Canopy]; LeftWing = this[Part.LeftWing];
-        RightWing = this[Part.RightWing]; Tail = this[Part.Tail]; Fuselage = this[Part.Fuselage];
+        Parts = all.ToArray();
+        Engines = Of(Part.Engine); Wings = Of(Part.Wing);
+        Canopy = Of(Part.Canopy)[0]; Tail = Of(Part.Tail)[0]; Fuselage = Of(Part.Fuselage)[0];
         _goneSeen = new bool[Parts.Length];
         _tankSeen = new PartState[Parts.Length];
+        _engineSeen = new PartState[Engines.Length];
+        _throttleOffSec = new float[Engines.Length];
+    }
+
+    private AircraftPart[] Of(Part kind) => Array.FindAll(Parts, p => p.Kind == kind);
+
+    private static List<int> IndicesOf(DamageTuning.HitBox[] boxes, Part kind)
+    {
+        var indices = new List<int>();
+        foreach (var b in boxes) if (b.Part == kind && !indices.Contains(b.Index)) indices.Add(b.Index);
+        return indices;
     }
 
     /// <summary>A point in the aircraft's own frame (feet: x toward the right wing, y up, z toward the tail) in the world (feet).</summary>
@@ -170,61 +205,60 @@ public abstract class Aircraft
     /// <summary>A point in the aircraft's own frame as a point in its sprite sphere's frame (x nose, y left wing, z up).</summary>
     public static Vector3 LocalToSphere(Vector3 local) => new(-local.Z, -local.X, local.Y);
 
-    /// <summary>Where a part's fire burns, in the world (feet): the engine's at the engine, any other part's at the middle of
-    /// its hit box.</summary>
-    public Vector3 FireFt(AircraftPart p) => p == Engine ? EngineFt() : LocalToWorldFt(p.Centre);
+    /// <summary>Where a part's fire burns, in the world (feet): the middle of its biggest hit box.</summary>
+    public Vector3 FireFt(AircraftPart p) => LocalToWorldFt(p.Centre);
 
-    /// <summary>Where the engine is (world feet): in the nose, ahead of the origin and a little below the centre line.</summary>
-    public Vector3 EngineFt()
+    /// <summary>Where an engine's fire is drawn on the sprite, in the sprite sphere's frame: the Look's fire point for it
+    /// (they are listed left to right like the engines), or the middle of the engine if the Look has no more.</summary>
+    public Vector3 EngineFirePoint(AircraftPart engine)
     {
-        World.Basis(Flight.Heading, Flight.Gamma, Flight.Bank, out _, out var u, out var f);
-        return PositionFt + f * Airframe.EngineAheadFt - u * 0.5f;
+        var i = Array.IndexOf(Engines, engine);
+        return i >= 0 && i < FirePoints.Length ? FirePoints[i] : LocalToSphere(engine.Centre);
     }
 
     // ---------------------------------------------------------------- damage
 
     /// <summary>A round hits one of its parts (see DamageModel.Hit). Returns the hit points the part lost.</summary>
-    public float Hit(Part part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng, Pilot by = null)
+    public float Hit(AircraftPart part, DamageTuning.Weapon weapon, float impactSpeedFtS, Random rng, Pilot by = null)
     {
-        var loss = DamageModel.Hit(this[part], weapon, impactSpeedFtS, rng);
+        var loss = DamageModel.Hit(part, weapon, impactSpeedFtS, rng);
         Damaged(part, loss, by, rng);
         return loss;
     }
 
     /// <summary>Damage that has already got through a part's armour (see DamageModel.Apply), for a round that carries its
     /// damage on from part to part. Returns the hit points the part lost.</summary>
-    public float TakeDamage(Part part, DamageTuning.Weapon weapon, float left, Random rng, Pilot by = null)
+    public float TakeDamage(AircraftPart part, DamageTuning.Weapon weapon, float left, Random rng, Pilot by = null)
     {
-        var loss = DamageModel.Apply(this[part], weapon, left);
+        var loss = DamageModel.Apply(part, weapon, left);
         Damaged(part, loss, by, rng);
         return loss;
     }
 
     /// <summary>A round has taken hit points off a part: whoever fired it dealt the part's latest blow (and so lit any
     /// engine fire that follows).</summary>
-    private void Damaged(Part part, float loss, Pilot by, Random rng)
+    private void Damaged(AircraftPart part, float loss, Pilot by, Random rng)
     {
         if (loss <= 0f) return;
-        if (by != null) this[part].LastHitBy = by;
-        if (part == Part.Engine) EngineDamaged(rng);
+        if (by != null) part.LastHitBy = by;
+        if (part.Kind == Part.Engine) EngineDamaged(part, rng);
     }
 
     /// <summary>Takes hit points straight off a part (debug, or damage that isn't a round).</summary>
-    public void DamagePart(Part part, float hp, Random rng)
+    public void DamagePart(AircraftPart part, float hp, Random rng)
     {
-        var p = this[part];
-        p.Hp = MathF.Max(0f, p.Hp - hp);
+        part.Hp = MathF.Max(0f, part.Hp - hp);
         PartDamaged(part, rng);
     }
 
-    /// <summary>A part has just lost hit points: the engine has its say (EngineDamaged), and a part holding fuel tanks
+    /// <summary>A part has just lost hit points: an engine has its say (EngineDamaged), and a part holding fuel tanks
     /// rolls TankLeakChance of a new leak for each damage band it has newly entered.</summary>
-    private void PartDamaged(Part part, Random rng)
+    private void PartDamaged(AircraftPart part, Random rng)
     {
-        if (part == Part.Engine) EngineDamaged(rng);
-        if (!Airframe.IsFuelTank(part)) return;
-        var i = (int)part;
-        var now = this[part].State;
+        if (part.Kind == Part.Engine) EngineDamaged(part, rng);
+        if (!Airframe.IsFuelTank(part.Kind)) return;
+        var i = Array.IndexOf(Parts, part);
+        var now = part.State;
         while (_tankSeen[i] < now)
         {
             _tankSeen[i]++;
@@ -232,63 +266,87 @@ public abstract class Aircraft
         }
     }
 
-    /// <summary>The engine has just lost hit points: each band it has newly entered has its say (a leak roll on entering
+    /// <summary>An engine has just lost hit points: each band it has newly entered has its say (a leak roll on entering
     /// yellow and on entering orange; a fire on reaching red), and a hit on an engine already in red lights it again.</summary>
-    private void EngineDamaged(Random rng)
+    private void EngineDamaged(AircraftPart engine, Random rng)
     {
-        var now = Engine.State;
-        while (_engineSeen < now)
+        var e = Array.IndexOf(Engines, engine);
+        var now = engine.State;
+        while (_engineSeen[e] < now)
         {
-            _engineSeen++;
-            if (_engineSeen is PartState.Slight or PartState.Moderate)
+            _engineSeen[e]++;
+            if (_engineSeen[e] is PartState.Slight or PartState.Moderate)
                 if (rng.NextDouble() < DamageTuning.LeakChance) Leaks++;
         }
         if (now >= PartState.Critical && FuelGal > 0f)
         {
-            Engine.OnFire = true;
-            _throttleOffSec = 0f;
+            engine.OnFire = true;
+            _throttleOffSec[e] = 0f;
         }
     }
 
-    /// <summary>Fuel burns (by throttle, see Airframe.FuelBurnTable) and every leak drains it faster on top; a fire burns
-    /// on while the throttle is up, eating the engine, and goes out with the throttle held at idle or the fuel gone. Once
-    /// the engine is gone the throttle can't starve it: only running out of fuel puts it out.</summary>
+    /// <summary>Fuel burns (by throttle, see Airframe.FuelBurnTable, in proportion to how many engines are still running)
+    /// and every leak drains it faster on top; an engine fire burns on while the throttle is up, eating the engine, and goes
+    /// out with the throttle held at idle or the fuel gone. Once an engine is gone the throttle can't starve it: only
+    /// running out of fuel puts it out.</summary>
     private void UpdateEngine(float dt)
     {
         var throttle = Flight.Throttle;
         if (FuelGal > 0f)
         {
-            var burn = EnginePower > 0f ? Airframe.FuelBurnGalPerHour(throttle) / 60f : 0f;   // gal/min
+            var running = 0;
+            foreach (var e in Engines) if (!e.Gone) running++;
+            var burn = Airframe.FuelBurnGalPerHour(throttle) / 60f * running / Engines.Length;   // gal/min
             FuelGal = MathF.Max(0f, FuelGal - (burn + Leaks * DamageTuning.LeakGalPerMin) * dt / 60f);
         }
-        if (!Engine.OnFire) return;
-        if (FuelGal <= 0f) { Engine.OnFire = false; return; }
-        _throttleOffSec = throttle < DamageTuning.FireThrottleOff && !Engine.Gone ? _throttleOffSec + dt : 0f;
-        if (_throttleOffSec >= DamageTuning.FireOutSec) { Engine.OnFire = false; return; }
-        var rate = MathHelper.Lerp(DamageTuning.FireBurnMinHpPerSec, DamageTuning.FireBurnMaxHpPerSec, FireStrength);
-        Engine.Hp = MathF.Max(0f, Engine.Hp - rate * dt);
+        for (var i = 0; i < Engines.Length; i++)
+        {
+            var e = Engines[i];
+            if (!e.OnFire) continue;
+            if (FuelGal <= 0f) { e.OnFire = false; continue; }
+            _throttleOffSec[i] = throttle < DamageTuning.FireThrottleOff && !e.Gone ? _throttleOffSec[i] + dt : 0f;
+            if (_throttleOffSec[i] >= DamageTuning.FireOutSec) { e.OnFire = false; continue; }
+            var rate = MathHelper.Lerp(DamageTuning.FireBurnMinHpPerSec, DamageTuning.FireBurnMaxHpPerSec, FireStrengthOf(e));
+            e.Hp = MathF.Max(0f, e.Hp - rate * dt);
+        }
     }
 
-    /// <summary>Fires on parts other than the engine eat their part and never go out; a part (other than the engine, whose
+    /// <summary>Fires on parts other than engines eat their part and never go out; a part (other than an engine, whose
     /// fire never spreads) that is gone and burning sets its neighbours alight, a chance each second.</summary>
     private void UpdateFires(float dt, Random rng)
     {
         foreach (var p in Parts)
         {
-            if (!p.OnFire || p == Engine) continue;
+            if (!p.OnFire || p.Kind == Part.Engine) continue;
             var rate = MathHelper.Lerp(DamageTuning.PartFireBurnMinHpPerSec, DamageTuning.PartFireBurnMaxHpPerSec, FireStrengthOf(p));
             p.Hp = MathF.Max(0f, p.Hp - rate * dt);
         }
         foreach (var p in Parts)
         {
-            if (!p.Gone || !p.OnFire || p == Engine) continue;
-            foreach (var n in DamageModel.Neighbours(p.Kind))
-                if (!this[n].OnFire && rng.NextDouble() < DamageTuning.FireSpreadChancePerSec * dt)
+            if (!p.Gone || !p.OnFire || p.Kind == Part.Engine) continue;
+            foreach (var n in NeighboursOf(p))
+                if (!n.OnFire && rng.NextDouble() < DamageTuning.FireSpreadChancePerSec * dt)
                 {
-                    this[n].OnFire = true;
-                    this[n].LastHitBy = p.LastHitBy;   // the fire is the blow of whoever set it
+                    n.OnFire = true;
+                    n.LastHitBy = p.LastHitBy;   // the fire is the blow of whoever set it
                 }
         }
+    }
+
+    /// <summary>The parts touching a part, for fire spreading and an engine's blast (see DamageModel.Neighbours for the
+    /// kinds that touch). An engine and a wing touch only on the same side of the aircraft.</summary>
+    private List<AircraftPart> NeighboursOf(AircraftPart p)
+    {
+        var touching = DamageModel.Neighbours(p.Kind);
+        var found = new List<AircraftPart>();
+        foreach (var n in Parts)
+        {
+            if (n == p || Array.IndexOf(touching, n.Kind) < 0) continue;
+            var engineAndWing = (p.Kind, n.Kind) is (Part.Engine, Part.Wing) or (Part.Wing, Part.Engine);
+            if (engineAndWing && p.Side != 0 && n.Side != 0 && p.Side != n.Side) continue;
+            found.Add(n);
+        }
+        return found;
     }
 
     /// <summary>Deals with each part the moment it is gone (once). The first part gone is a confirmed kill, credited to the
@@ -296,7 +354,8 @@ public abstract class Aircraft
     ///   engine   - blows up: an explosion that destroys one random part touching it and sets it alight (so that
     ///              part's own loss follows); the engine burns on, but its own fire never spreads after that;
     ///   fuselage - the airframe breaks: an explosion, it burns, and the aircraft noses over into a steep spiralling dive;
-    ///   a wing   - the other wing's lift rolls it over: a spin toward the missing wing all the way down;
+    ///   a wing   - the other wing's lift rolls it over: a spin toward the side the wing was on (AircraftPart.Side) all
+    ///              the way down;
     ///   canopy   - the pilot is dead: nobody flies it, it holds its heading and the nose slowly sinks;
     ///   tail     - all pitch and roll control gone (see UpdateControls).</summary>
     private void CheckLosses(Fx fx, Random rng)
@@ -315,13 +374,13 @@ public abstract class Aircraft
             switch (p.Kind)
             {
                 case Part.Engine:
-                    fx.Explosion(EngineFt(), 30f, IsPlayer);
+                    fx.Explosion(FireFt(p), 30f, IsPlayer);
                     p.OnFire = true;
                     // The blast takes one part touching the engine with it, picked at random: that part is gone and on fire
                     // (its loss is dealt with further on in this same pass: the parts after the engine). After that the
-                    // engine's own fire stays in the nose.
-                    var near = DamageModel.Neighbours(Part.Engine);
-                    var blown = this[near[rng.Next(near.Length)]];
+                    // engine's own fire stays where it is.
+                    var near = NeighboursOf(p);
+                    var blown = near[rng.Next(near.Count)];
                     blown.Hp = 0f;
                     blown.OnFire = true;
                     blown.LastHitBy = p.LastHitBy;   // whoever blew the engine took this part too
@@ -331,11 +390,9 @@ public abstract class Aircraft
                     p.OnFire = true;
                     Fail(FlightFailure.NoseDive, rng.Next(2) == 0 ? -1f : 1f);
                     break;
-                case Part.LeftWing:
-                    Fail(FlightFailure.Spin, -1f);
-                    break;
-                case Part.RightWing:
-                    Fail(FlightFailure.Spin, 1f);
+                case Part.Wing:
+                    // It spins toward the wing that is gone; a wing on the centre line has no side, so either way.
+                    Fail(FlightFailure.Spin, p.Side != 0 ? p.Side : rng.Next(2) == 0 ? -1f : 1f);
                     break;
                 case Part.Canopy:
                     PilotKilled = true;
@@ -354,16 +411,26 @@ public abstract class Aircraft
     }
 
     /// <summary>What the damage leaves of the controls (see DamageModel.ControlLoss): the tail takes its loss off pitch,
-    /// roll and rudder, each wing half of its own off roll and turn; a black wing's lost lift rolls the aircraft toward it.</summary>
+    /// roll and rudder, the wings share theirs (the average) off roll and turn; a black wing's lost lift rolls the aircraft
+    /// toward the side with less (a wing's side is where it sits: left is -1, right +1).</summary>
     private void UpdateControls()
     {
         var tail = DamageModel.ControlLoss(Tail.Hp);
-        var wings = (DamageModel.ControlLoss(LeftWing.Hp) + DamageModel.ControlLoss(RightWing.Hp)) / 2f;
+        float wings = 0f, liftL = 0f, liftR = 0f;
+        int nL = 0, nR = 0;
+        foreach (var w in Wings)
+        {
+            wings += DamageModel.ControlLoss(w.Hp) / Wings.Length;
+            var lift = DamageModel.LiftLoss(w.Hp);
+            if (w.Side <= 0) { liftL += lift; nL++; }
+            if (w.Side >= 0) { liftR += lift; nR++; }
+        }
+        if (nL > 0) liftL /= nL;
+        if (nR > 0) liftR /= nR;
         Flight.PitchAuthority = 1f - tail;
         Flight.RollAuthority = (1f - wings) * (1f - tail);
         Flight.YawAuthority = 1f - tail;
         Flight.TurnAuthority = 1f - wings;
-        float liftL = DamageModel.LiftLoss(LeftWing.Hp), liftR = DamageModel.LiftLoss(RightWing.Hp);
         Flight.RollBias = (liftR - liftL) * DamageTuning.WingRollBias;   // + rolls right, toward a weaker right wing
         Flight.LiftLoss = (liftL + liftR) / 2f;
         Flight.NoseDropDegS = PilotKilled ? DamageTuning.DeadPilotNoseDropDegS : Tail.Gone ? DamageTuning.TailGoneNoseDropDegS : 0f;
@@ -386,13 +453,22 @@ public abstract class Aircraft
         UpdateControls();
         Flight.EnginePower = EnginePower;
         World.Basis(Flight.Heading, Flight.Gamma, Flight.Bank, out _, out _, out var fwd);
-        if (SmokeStrength > 0f || Engine.OnFire || Leaks > 0)
-            fx.EngineTrail(EngineFt() - fwd * 4f, -fwd, SmokeStrength, FireStrength, Leaks, IsPlayer);
+        foreach (var e in Engines)
+        {
+            var smoke = SmokeStrengthOf(e);
+            if (smoke > 0f || e.OnFire || Leaks > 0)
+                fx.EngineTrail(FireFt(e) - fwd * 4f, -fwd, smoke, FireStrengthOf(e), Leaks, IsPlayer);
+        }
         foreach (var p in Parts)
-            if (p.OnFire && p != Engine) fx.EngineTrail(FireFt(p) - fwd * 2f, -fwd, 0f, FireStrengthOf(p), 0, IsPlayer);
+            if (p.OnFire && p.Kind != Part.Engine) fx.EngineTrail(FireFt(p) - fwd * 2f, -fwd, 0f, FireStrengthOf(p), 0, IsPlayer);
         if (Frozen) return;
         Flight.Step(Airframe.RollResponse, rng);
-        foreach (var p in Propellers) p.Update(Flight.Throttle, EnginePower > 0f);
+        for (var i = 0; i < Propellers.Length; i++)
+        {
+            // A propeller turns with the engine it sits on (they are listed left to right like the engines).
+            var engine = Engines[Math.Min(i, Engines.Length - 1)];
+            Propellers[i].Update(Flight.Throttle, FuelGal > 0f && !engine.Gone);
+        }
         if (Flight.GroundHit && !IsPlayer) Crashed = true;   // (the game handles the player's landings and crashes)
         var dir = new Vector2(MathF.Sin(Flight.Heading), -MathF.Cos(Flight.Heading));
         Pos += dir * Flight.GroundSpeed * World.PxPerFoot / 60f;
@@ -416,6 +492,14 @@ public sealed class AircraftPart
     /// <summary>The middle of its biggest hit box, in the aircraft's frame: where its fire burns.</summary>
     public readonly Vector3 Centre;
 
+    /// <summary>Which side of the aircraft it is on, from where its biggest hit box is: -1 left, +1 right, 0 on the centre
+    /// line (within a foot of it). A wing's side is the way the aircraft spins when it goes.</summary>
+    public int Side => Centre.X < -1f ? -1 : Centre.X > 1f ? 1 : 0;
+
+    /// <summary>What it is called on the screen: its kind's name when there is only one of it, L or R in front of it when
+    /// there are two (L WING, R ENGINE), otherwise numbered left to right (ENGINE 3).</summary>
+    public string Name { get; set; }
+
     public AircraftPart(Part kind, DamageTuning.HitBox[] boxes, float armor, float integrity, float damageMultiplier)
     {
         Kind = kind;
@@ -430,11 +514,18 @@ public sealed class AircraftPart
             var volume = size.X * size.Y * size.Z;
             if (volume > biggest) { biggest = volume; Centre = (b.Min + b.Max) / 2f; }
         }
+        Name = DamageModel.Name(kind);
     }
+
+    public static string NameOf(Part kind, int leftToRight, int count) => count switch
+    {
+        1 => DamageModel.Name(kind),
+        2 => (leftToRight == 0 ? "L " : "R ") + DamageModel.Name(kind),
+        _ => $"{DamageModel.Name(kind)} {leftToRight + 1}",
+    };
 
     public PartState State => DamageModel.StateOf(Hp);
     public bool Gone => Hp <= 0f;
-    public string Name => DamageModel.Name(Kind);
 }
 
 /// <summary>How an aircraft type looks: the sprite sheet it is drawn from, its propellers and where its engine fires

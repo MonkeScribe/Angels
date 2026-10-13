@@ -55,7 +55,7 @@ public sealed class AircraftArt
         {
             if (!part.OnFire) continue;
             var strength = a.FireStrengthOf(part) * alpha;
-            if (part == a.Engine) foreach (var at in a.FirePoints) DrawFire(sb, at, view, pos, scale, strength, a.Salt, time);
+            if (part.Kind == Part.Engine) DrawFire(sb, a.EngineFirePoint(part), view, pos, scale, strength, a.Salt + Array.IndexOf(a.Engines, part), time);
             else DrawFire(sb, Aircraft.LocalToSphere(part.Centre), view, pos, scale, strength, a.Salt + 1 + (int)part.Kind, time);
         }
     }

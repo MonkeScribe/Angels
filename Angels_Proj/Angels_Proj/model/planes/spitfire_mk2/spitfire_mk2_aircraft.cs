@@ -59,18 +59,18 @@ public sealed class SpitfireMk2 : Aircraft
         FirePoints = new[] { new Vector3(9.2f, 0f, -0.15f) },
     };
 
-    // ---- Parts, in Part order: Engine, Canopy, LeftWing, RightWing, Tail, Fuselage ----
+    // ---- Parts, by kind in Part order: Engine, Canopy, Wing, Tail, Fuselage (one entry each, shared by every part of the kind) ----
 
     /// <summary>Subtracted from every roll that hits the part.</summary>
-    public static readonly float[] Armor = { 4f, 0f, 1f, 1f, 0.5f, 2f };
+    public static readonly float[] Armor = { 4f, 0f, 1f, 0.5f, 2f };
 
     /// <summary>How hard each part is to destroy outright, 0-100 (see DamageTuning). Against the .303's Destructive of 30:
     /// engine and canopy have no floor (the .303 can destroy them); wings and tail have a floor of 55 hp and the fuselage
     /// 60, below which the .303 does less and less and can't take them into black (they stop at 26 hp, in red).</summary>
-    public static readonly float[] Integrity = { 30f, 10f, 85f, 85f, 85f, 90f };
+    public static readonly float[] Integrity = { 30f, 10f, 85f, 85f, 90f };
 
     /// <summary>What's left after armour is multiplied by this before it comes off the part's hit points (1 = as is).</summary>
-    public static readonly float[] DamageMultiplier = { 1f, 1f, 1f, 1f, 1f, 1f };
+    public static readonly float[] DamageMultiplier = { 1f, 1f, 1f, 1f, 1f };
 
     /// <summary>Hit boxes in the aircraft's frame, feet: x toward the right wing, y up, z toward the tail (the nose is at
     /// -z); the origin is about at the wing root.</summary>
@@ -80,8 +80,8 @@ public sealed class SpitfireMk2 : Aircraft
         new(new Vector3(-1.3f, 1.8f, -2f), new Vector3(1.3f, 4.2f, 3f), Part.Canopy),             // cockpit glazing
         new(new Vector3(-2.5f, -2.6f, -6.5f), new Vector3(2.5f, 2.2f, 12.8f), Part.Fuselage),     // firewall to tail
         new(new Vector3(-1.2f, -1.4f, 12.8f), new Vector3(1.2f, 1.4f, 16.8f), Part.Fuselage),     // tail cone
-        new(new Vector3(-18.6f, -1f, -4.2f), new Vector3(-2.5f, 1f, 4.7f), Part.LeftWing),
-        new(new Vector3(2.5f, -1f, -4.2f), new Vector3(18.6f, 1f, 4.7f), Part.RightWing),
+        new(new Vector3(-18.6f, -1f, -4.2f), new Vector3(-2.5f, 1f, 4.7f), Part.Wing, 0),
+        new(new Vector3(2.5f, -1f, -4.2f), new Vector3(18.6f, 1f, 4.7f), Part.Wing, 1),
         new(new Vector3(-5.4f, -0.3f, 13f), new Vector3(5.4f, 0.7f, 16.8f), Part.Tail),          // tailplane and elevators
         new(new Vector3(-0.5f, 0.7f, 12.8f), new Vector3(0.5f, 7f, 16.8f), Part.Tail),           // fin and rudder
     };

@@ -3,8 +3,10 @@ using Microsoft.Xna.Framework;
 
 namespace Angels_Proj;
 
-/// <summary>The parts of an aircraft that take damage separately, each with its own hit box(es).</summary>
-public enum Part { Engine, Canopy, LeftWing, RightWing, Tail, Fuselage }
+/// <summary>The kinds of part an aircraft is made of that take damage separately, each with its own hit box(es). An
+/// aircraft has one or more of a kind: a twin has two engines and every type has two wings. Which one of a kind a part is,
+/// is its place on the aircraft (see AircraftPart.Side), not a different kind.</summary>
+public enum Part { Engine, Canopy, Wing, Tail, Fuselage }
 
 /// <summary>How badly a part is damaged, from its hit points (0-100). Every part uses the same bands.</summary>
 public enum PartState { Undamaged, Slight, Moderate, Critical, Black, Gone }
@@ -55,7 +57,7 @@ public static class DamageTuning
 
     public const float MaxHp = 100f;
 
-    // Each part's armour (subtracted from every roll that hits it), integrity (see the class notes) and damage
+    // Each kind of part's armour (subtracted from every roll that hits it), integrity (see the class notes) and damage
     // multiplier belong to the aircraft type: see SpitfireMk2 (model/planes).
 
     /// <summary>Below the floor, damage is multiplied by a factor that slides from BelowFloorScale (at the floor) down to
@@ -106,7 +108,7 @@ public static class DamageTuning
 
     /// <summary>How much control a damaged wing or tail costs, as a fraction of its maximum rates: ControlLossAt75 with the
     /// part at 75 hp, ControlLossAt50 at 50, then straight up to all of it at 0 (see DamageModel.ControlLoss). The tail
-    /// takes it off pitch, roll and rudder; each wing takes half of its own off roll and turn, there being two.</summary>
+    /// takes it off pitch, roll and rudder; the wings share the loss of roll and turn between them.</summary>
     public static float ControlLossAt75 = 0.05f, ControlLossAt50 = 0.10f;
 
     /// <summary>A black wing loses lift: from BlackWingLiftLoss just into black to all of it at 0 hp. The aircraft rolls
@@ -120,12 +122,15 @@ public static class DamageTuning
     // ---------------------------------------------------------------- hit boxes
 
     /// <summary>One box of a part, in the aircraft's own frame in feet: x toward the right wing, y up, z toward the tail
-    /// (the nose is at -z). A part can have several boxes.</summary>
+    /// (the nose is at -z). A part can have several boxes. Index says which part of its kind the box belongs to (0 for the
+    /// only engine, 0 and 1 for the two wings of a single-engined fighter or the two engines of a twin): boxes of the same
+    /// kind and index are one part.</summary>
     public readonly struct HitBox
     {
         public readonly Vector3 Min, Max;
         public readonly Part Part;
-        public HitBox(Vector3 min, Vector3 max, Part part) { Min = min; Max = max; Part = part; }
+        public readonly int Index;
+        public HitBox(Vector3 min, Vector3 max, Part part, int index = 0) { Min = min; Max = max; Part = part; Index = index; }
     }
 
     // Each aircraft type has its own hit boxes: see SpitfireMk2 (model/planes).
@@ -140,12 +145,11 @@ public static class DamageModel
     /// fuselage joins everything, the tail hangs off the fuselage.</summary>
     private static readonly Part[][] Touching =
     {
-        new[] { Part.Canopy, Part.Fuselage, Part.LeftWing, Part.RightWing },              // Engine
-        new[] { Part.Engine, Part.Fuselage },                                             // Canopy
-        new[] { Part.Engine, Part.Fuselage },                                             // LeftWing
-        new[] { Part.Engine, Part.Fuselage },                                             // RightWing
-        new[] { Part.Fuselage },                                                          // Tail
-        new[] { Part.Engine, Part.Canopy, Part.LeftWing, Part.RightWing, Part.Tail },     // Fuselage
+        new[] { Part.Canopy, Part.Fuselage, Part.Wing },       // Engine
+        new[] { Part.Engine, Part.Fuselage },                  // Canopy
+        new[] { Part.Engine, Part.Fuselage },                  // Wing
+        new[] { Part.Fuselage },                               // Tail
+        new[] { Part.Engine, Part.Canopy, Part.Wing, Part.Tail },   // Fuselage
     };
 
     public static Part[] Neighbours(Part p) => Touching[(int)p];
@@ -250,8 +254,7 @@ public static class DamageModel
     {
         Part.Engine => "ENGINE",
         Part.Canopy => "CANOPY",
-        Part.LeftWing => "L WING",
-        Part.RightWing => "R WING",
+        Part.Wing => "WING",
         Part.Tail => "TAIL",
         _ => "FUSELAGE",
     };

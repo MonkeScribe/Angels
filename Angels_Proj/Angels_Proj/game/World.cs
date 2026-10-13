@@ -85,12 +85,12 @@ public sealed class World
     public readonly struct RayEntry
     {
         public readonly Aircraft Plane;
-        public readonly Part Part;
+        public readonly AircraftPart Part;
         public readonly float Distance;
-        public RayEntry(Aircraft plane, Part part, float distance) { Plane = plane; Part = part; Distance = distance; }
+        public RayEntry(Aircraft plane, AircraftPart part, float distance) { Plane = plane; Part = part; Distance = distance; }
     }
 
-    private readonly Dictionary<(Aircraft, Part), float> _entries = new();
+    private readonly Dictionary<(Aircraft, AircraftPart), float> _entries = new();
 
     /// <summary>Every part of every aircraft (other than ignore) that a ray enters within maxRange feet, nearest first,
     /// each part once (where it is first entered). A part the ray starts inside isn't entered again, so a round that is
@@ -114,7 +114,7 @@ public sealed class World
                 foreach (var b in pt.Boxes)
                 {
                     if (!Entry(o, d, b.Min, b.Max, out var t) || t > maxRange) continue;
-                    var key = (p, pt.Kind);
+                    var key = (p, pt);
                     if (!_entries.TryGetValue(key, out var old) || t < old) _entries[key] = t;
                 }
             }
@@ -125,7 +125,7 @@ public sealed class World
 
     /// <summary>Damage that has got through a part's armour lands on it (see Aircraft.TakeDamage). Returns the hit points
     /// the part lost.</summary>
-    public float Hit(Aircraft a, Part part, DamageTuning.Weapon weapon, float left, Random rng, Pilot by)
+    public float Hit(Aircraft a, AircraftPart part, DamageTuning.Weapon weapon, float left, Random rng, Pilot by)
     {
         Hits++;
         return a.TakeDamage(part, weapon, left, rng, by);
@@ -135,11 +135,11 @@ public sealed class World
     /// the part the box belongs to. For the debug hit box view.</summary>
     public static void HitBoxEdges(Aircraft p, List<(Vector3 a, Vector3 b, Color color)> into)
     {
-        var boxes = new List<(Vector3[] c, Part part)>();
+        var boxes = new List<(Vector3[] c, AircraftPart part)>();
         HitBoxCorners(p, boxes);
         foreach (var (c, part) in boxes)
         {
-            var color = DamageModel.StateColor(p[part].State);
+            var color = DamageModel.StateColor(part.State);
             for (var i = 0; i < 8; i++)
                 for (var bit = 1; bit <= 4; bit <<= 1)
                     if ((i & bit) == 0) into.Add((c[i], c[i | bit], color));
@@ -147,7 +147,7 @@ public sealed class World
     }
 
     /// <summary>The eight world corners (feet) of each of an aircraft's hit boxes, with the part each box belongs to.</summary>
-    public static void HitBoxCorners(Aircraft p, List<(Vector3[] corners, Part part)> into)
+    public static void HitBoxCorners(Aircraft p, List<(Vector3[] corners, AircraftPart part)> into)
     {
         Basis(p.Heading, p.Pitch, p.Bank, out var r, out var u, out var f);
         var centre = p.PositionFt;
@@ -160,7 +160,7 @@ public sealed class World
                 float x = (i & 1) == 0 ? bx.Min.X : bx.Max.X, y = (i & 2) == 0 ? bx.Min.Y : bx.Max.Y, z = (i & 4) == 0 ? bx.Min.Z : bx.Max.Z;
                 c[i] = centre + r * x + u * y + (-f) * z;   // local +z is backwards
             }
-            into.Add((c, bx.Part));
+            into.Add((c, pt));
         }
     }
 

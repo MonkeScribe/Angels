@@ -504,7 +504,10 @@ public class Game1 : Game
         _gunsight.SmokeBudget = _graphicsHigh ? 0 : LowSmokeBudget;
     }
 
-    private Part _debugPart = Part.Engine;    // the part the debug menu's damage buttons hit
+    private int _debugPart;    // the part (an index into Aircraft.Parts) the debug menu's damage buttons hit
+
+    /// <summary>The part of an aircraft the debug menu's damage buttons are on (the same place in its parts, as far as it has them).</summary>
+    private AircraftPart DebugPart(Aircraft a) => a.Parts[Math.Min(_debugPart, a.Parts.Length - 1)];
 
     /// <summary>Who the debug menu's HIT TARGET hits: the test target, else the aircraft being aimed at, else the nearest.</summary>
     private Aircraft DebugTarget()
@@ -550,10 +553,10 @@ public class Game1 : Game
         m.Add("SMOKE BUDGET", () => _gunsight.SmokeBudget > 0 ? _gunsight.SmokeBudget.ToString() : "NONE", () =>
             _gunsight.SmokeBudget = _gunsight.SmokeBudget switch { 0 => 80, 80 => 160, 160 => 320, _ => 0 });
         m.Section("DAMAGE");
-        m.Add("PART", () => DamageModel.Name(_debugPart), () => _debugPart = (Part)(((int)_debugPart + 1) % DamageModel.PartCount));
-        m.Add("HIT OWN -25", () => $"{MathF.Ceiling(_dmg[_debugPart].Hp):0} HP", () => _dmg.DamagePart(_debugPart, 25f, _rng));
-        m.Add("HIT TARGET -25", () => DebugTarget() is { } t ? $"{MathF.Ceiling(t[_debugPart].Hp):0} HP" : "NONE",
-            () => DebugTarget()?.DamagePart(_debugPart, 25f, _rng));
+        m.Add("PART", () => DebugPart(_dmg).Name, () => _debugPart = (_debugPart + 1) % _dmg.Parts.Length);
+        m.Add("HIT OWN -25", () => $"{MathF.Ceiling(DebugPart(_dmg).Hp):0} HP", () => _dmg.DamagePart(DebugPart(_dmg), 25f, _rng));
+        m.Add("HIT TARGET -25", () => DebugTarget() is { } t ? $"{MathF.Ceiling(DebugPart(t).Hp):0} HP" : "NONE",
+            () => { if (DebugTarget() is { } t) t.DamagePart(DebugPart(t), 25f, _rng); });
         m.Section("TESTS");
         m.Add("GUN TEST", () => MenuPanel.OnOff(_test == TestMode.Gun), () => { if (_test == TestMode.Gun) Reset(); else StartGunTest(); });
         m.Add("FPS: FOLLOW THROUGH CLOUD", () => MenuPanel.OnOff(_test == TestMode.FollowThroughCloud),
@@ -1481,15 +1484,15 @@ public class Game1 : Game
         int w = (int)(300 * s), rowH = 10 * px;
         var x = GraphicsDevice.Viewport.Width - w - (int)(24 * s);
         var y = (int)(24 * s);
-        _sb.Draw(_pixel, new Rectangle(x - 10, y - 10, w + 20, rowH * (DamageModel.PartCount + 1) + 14), new Color(6, 14, 28, 190));
+        _sb.Draw(_pixel, new Rectangle(x - 10, y - 10, w + 20, rowH * (p.Parts.Length + 1) + 14), new Color(6, 14, 28, 190));
         PixelFont.Draw(_sb, _pixel, "TARGET DAMAGE", new Vector2(x, y), px, new Color(255, 206, 84));
-        for (var i = 0; i < DamageModel.PartCount; i++)
+        for (var i = 0; i < p.Parts.Length; i++)
         {
             var hp = p.Parts[i].Hp;
             var state = DamageModel.StateOf(hp);
             var ry = y + (i + 1) * rowH;
             var col = state == PartState.Black ? new Color(90, 90, 90) : DamageModel.StateColor(state);   // black on the dark panel: grey
-            PixelFont.Draw(_sb, _pixel, DamageModel.Name((Part)i), new Vector2(x, ry), px, col);
+            PixelFont.Draw(_sb, _pixel, p.Parts[i].Name, new Vector2(x, ry), px, col);
             var v = $"{MathF.Ceiling(hp):0} {DamageModel.Name(state)}";
             PixelFont.Draw(_sb, _pixel, v, new Vector2(x + w - PixelFont.Measure(v, px), ry), px, col);
         }

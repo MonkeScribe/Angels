@@ -37,7 +37,6 @@ public static class SpitfireMk2Airframe
             (0f, 10f), (0.6f, 65f), (0.8f, 105f), (1f, 150f),
         },
         FuelTankParts = new[] { Part.Fuselage },                     // the tanks sit between the firewall and the cockpit
-        EngineAheadFt = 11f,
 
         // ---- Limits ----
         VneMph = 450f,

@@ -48,7 +48,6 @@ public sealed class Airframe
     public (float throttle, float galPerHour)[] FuelBurnTable;
     /// <summary>The parts its fuel tanks are in: a hit that takes one of them into a worse damage band may hole a tank.</summary>
     public Part[] FuelTankParts;
-    public float EngineAheadFt;                     // where the engine sits, ahead of the aircraft's origin
 
     public float AspectRatio => Span * Span / WingArea;
     public float WingLoading => WeightLb / WingArea;

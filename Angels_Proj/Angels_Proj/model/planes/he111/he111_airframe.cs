@@ -24,8 +24,7 @@ public static class He111Airframe
         {
             (0f, 25f), (0.6f, 110f), (0.8f, 140f), (1f, 170f),
         },
-        FuelTankParts = new[] { Part.Fuselage, Part.LeftWing, Part.RightWing },
-        EngineAheadFt = 12f,
+        FuelTankParts = new[] { Part.Fuselage, Part.Wing },
 
         // ---- Limits ----
         VneMph = 340f,

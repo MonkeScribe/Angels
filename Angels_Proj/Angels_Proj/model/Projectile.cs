@@ -127,7 +127,7 @@ public sealed class Projectile
                 foreach (var h in hits)
                 {
                     if (h.Plane != plane) continue;
-                    var left = Damage - plane[h.Part].Armor;
+                    var left = Damage - h.Part.Armor;
                     if (left <= 0f) break;   // stopped by the armour
                     world.Hit(plane, h.Part, Weapon, left, rng, Shooter.Pilot);
                     Damage = left;
